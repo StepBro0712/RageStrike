@@ -1,0 +1,2 @@
+/Game/Weapons/Pistol/Meshes/SM_Pistol origin=(0.1,7.8,3.2) extent=(3.0,13.1,9.5) mats=['MI_Weapon_Pistol']
+/Game/Weapons/Rifle/Meshes/SM_Rifle origin=(-0.4,12.2,3.2) extent=(3.3,39.3,14.7) mats=['M_Rifle']

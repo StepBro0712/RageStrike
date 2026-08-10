@@ -1,0 +1,24 @@
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+Packaged/
+ImportSource/
+.vs/
+.idea/
+*.sln
+*.suo
+*.opensdf
+*.sdf
+*.VC.db
+*.VC.opendb
+
+# Ассеты не выкладываем: покупки с Fab и импортированные карты
+# нельзя распространять в исходном виде (только в собранной игре)
+Content/
+Plugins/
+
+# большие бинарники — только в GitHub Releases
+RageStrike_Setup.exe
+Scripts/mirage_info.txt
+Build/Windows/FileOpenOrder/

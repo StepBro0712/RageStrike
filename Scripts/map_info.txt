@@ -1,0 +1,2 @@
+копия создана: True
+/Game/Weapons/Pistol/Meshes/SM_Pistol_G01 origin=(0.4,12.2,36.6) extent=(6.8,51.4,36.7)
