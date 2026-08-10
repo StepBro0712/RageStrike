@@ -707,6 +707,20 @@ TSharedRef<SWidget> SRSMenu::MakePlayerCard()
 		];
 }
 
+FReply SRSMenu::OnKeyDown(const FGeometry& Geometry, const FKeyEvent& KeyEvent)
+{
+	// обе клавиши открытия меню закрывают его тоже, как было до UIOnly
+	if (KeyEvent.GetKey() == EKeys::Escape || KeyEvent.GetKey() == EKeys::P)
+	{
+		if (PC.IsValid())
+		{
+			PC->CloseMenu();
+			return FReply::Handled();
+		}
+	}
+	return SCompoundWidget::OnKeyDown(Geometry, KeyEvent);
+}
+
 void SRSMenu::Construct(const FArguments& InArgs)
 {
 	PC = InArgs._OwnerPC;

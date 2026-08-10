@@ -17,6 +17,13 @@ public:
 
 	void Construct(const FArguments& InArgs);
 
+	// Esc ловит само меню, а не InputComponent контроллера: под меню стоит
+	// режим UIOnly, и клавиши до привязок контроллера не доходят вовсе.
+	// Фокус приходит из OpenMenu через SetWidgetToFocus, но принять его
+	// SCompoundWidget может, только если разрешён фокус с клавиатуры.
+	virtual bool SupportsKeyboardFocus() const override { return true; }
+	virtual FReply OnKeyDown(const FGeometry& Geometry, const FKeyEvent& KeyEvent) override;
+
 private:
 	TWeakObjectPtr<ARSPlayerController> PC;
 	TSharedPtr<SEditableTextBox> IPBox;
