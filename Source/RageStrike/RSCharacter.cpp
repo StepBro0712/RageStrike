@@ -110,8 +110,6 @@ ARSCharacter::ARSCharacter()
 		GrenadeAsset = Ball.Object;
 	}
 
-	LoadWeaponMeshes();
-
 	// руки от первого лица: пока скрыты, идёт подбор посадки по замерам
 	ArmsMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("ArmsMesh"));
 	ArmsMesh->SetupAttachment(Camera);
@@ -220,42 +218,6 @@ ARSCharacter::ARSCharacter()
 	SetMinNetUpdateFrequency(30.f);
 	SetReplicateMovement(true);
 	Move->NetworkSmoothingMode = ENetworkSmoothingMode::Exponential;
-}
-
-void ARSCharacter::LoadWeaponMeshes()
-{
-	// Скачанные модели CS2. Ассеты переименованы скриптом импорта в SM_<Имя>,
-	// поэтому пути предсказуемы; чего нет — останется заглушка по ERSMeshKind.
-	struct FEntry { ERSWeapon Weapon; const TCHAR* Path; };
-	static const FEntry Entries[] =
-	{
-		{ ERSWeapon::AK47,    TEXT("/Game/Weapons/CS2/AK47/Meshes/SM_AK47.SM_AK47") },
-		{ ERSWeapon::USP,     TEXT("/Game/Weapons/CS2/USPS/Meshes/SM_USPS.SM_USPS") },
-		{ ERSWeapon::Deagle,  TEXT("/Game/Weapons/CS2/Deagle/Meshes/SM_Deagle.SM_Deagle") },
-		{ ERSWeapon::M4A4,    TEXT("/Game/Weapons/CS2/M4A4/Meshes/SM_M4A4.SM_M4A4") },
-		{ ERSWeapon::AUG,     TEXT("/Game/Weapons/CS2/AUG/Meshes/SM_AUG.SM_AUG") },
-		{ ERSWeapon::FAMAS,   TEXT("/Game/Weapons/CS2/Famas/Meshes/SM_Famas.SM_Famas") },
-		{ ERSWeapon::GalilAR, TEXT("/Game/Weapons/CS2/Galil/Meshes/SM_Galil.SM_Galil") },
-		{ ERSWeapon::MP9,     TEXT("/Game/Weapons/CS2/MP9/Meshes/SM_MP9.SM_MP9") },
-		{ ERSWeapon::AWP,     TEXT("/Game/Weapons/CS2/AWP/Meshes/SM_AWP.SM_AWP") },
-		// без своих моделей: близкие по классу берут чужую
-		{ ERSWeapon::SG553,   TEXT("/Game/Weapons/CS2/AUG/Meshes/SM_AUG.SM_AUG") },
-		{ ERSWeapon::UMP45,   TEXT("/Game/Weapons/CS2/MP7/Meshes/SM_MP7.SM_MP7") },
-		{ ERSWeapon::MAC10,   TEXT("/Game/Weapons/CS2/MP7/Meshes/SM_MP7.SM_MP7") },
-		{ ERSWeapon::P90,     TEXT("/Game/Weapons/CS2/Bizon/Meshes/SM_Bizon.SM_Bizon") },
-		{ ERSWeapon::SSG08,   TEXT("/Game/Weapons/CS2/AWP/Meshes/SM_AWP.SM_AWP") },
-		{ ERSWeapon::Nova,    TEXT("/Game/Weapons/CS2/M249/Meshes/SM_M249.SM_M249") },
-		{ ERSWeapon::XM1014,  TEXT("/Game/Weapons/CS2/Negev/Meshes/SM_Negev.SM_Negev") },
-	};
-
-	for (const FEntry& E : Entries)
-	{
-		// ConstructorHelpers в цикле нельзя — грузим напрямую
-		if (UStaticMesh* Loaded = LoadObject<UStaticMesh>(nullptr, E.Path))
-		{
-			WeaponMeshes.Add(E.Weapon, Loaded);
-		}
-	}
 }
 
 float ARSCharacter::GetWeaponRealLength(ERSWeapon W)
@@ -1007,9 +969,10 @@ void ARSCharacter::ApplyWeaponVisuals()
 	// Настоящая модель CS2 вместо заглушки. Модели скачаны у разных авторов,
 	// поэтому размер и разворот считаем по габаритам меша, а не подбираем руками:
 	// длинная ось направляется вперёд, а длина приводится к реальной.
-	if (UStaticMesh** Found = WeaponMeshes.Find(CurrentWeapon))
 	{
-		if (UStaticMesh* Real = *Found)
+		// общий загрузчик с ботами: у него свой кеш и рабочие пути для AK-47,
+		// USP-S и пистолетов, чьи модели лежат не в /Game/Weapons/CS2
+		if (UStaticMesh* Real = RSWeapons::LoadWeaponMesh(CurrentWeapon))
 		{
 			WeaponMesh = Real;
 

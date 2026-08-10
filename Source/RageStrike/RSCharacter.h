@@ -337,11 +337,6 @@ private:
 	UPROPERTY()
 	UStaticMesh* GrenadeAsset = nullptr; // сфера-болванка
 
-	// Настоящие модели CS2 по стволам. Чего нет — берётся заглушка по ERSMeshKind.
-	UPROPERTY()
-	TMap<ERSWeapon, UStaticMesh*> WeaponMeshes;
-
-	void LoadWeaponMeshes();
 	// длина ствола в сантиметрах: по ней модель приводится к нужному размеру
 	static float GetWeaponRealLength(ERSWeapon W);
 
