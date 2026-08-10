@@ -75,11 +75,14 @@ void ARSFireZone::BeginPlay()
 		Flames.Add(Flame);
 	}
 
-	// потрескивание огня, петля на всё время горения
+	// Потрескивание огня цепляем к самому актору: звук в точке мира живёт
+	// своей жизнью и продолжал гудеть после того, как огонь погас.
 	if (USoundBase* Snd = RSAudio::Get(RSAudio::ESound::Burn))
 	{
-		UGameplayStatics::SpawnSoundAtLocation(this, Snd, GetActorLocation(),
-			FRotator::ZeroRotator, 0.8f);
+		UGameplayStatics::SpawnSoundAttached(Snd, GetRootComponent(), NAME_None,
+			FVector::ZeroVector, EAttachLocation::KeepRelativeOffset,
+			/*bStopWhenAttachedToDestroyed*/ true, 0.8f, 1.f, 0.f,
+			RSAudio::GetAttenuation(RSAudio::ERange::Ambient));
 	}
 
 	SetLifeSpan(Duration);

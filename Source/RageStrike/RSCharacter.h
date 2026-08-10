@@ -125,6 +125,10 @@ public:
 	AActor* SpectateTarget = nullptr;
 	bool bBuyMenuOpen = false;
 	bool bCheatMenuOpen = false;   // оверлей читов, Del или Insert
+
+	// переключение чита по номеру строки оверлея: читы включаются мышью,
+	// клавиш F1-F8 больше нет
+	void ToggleCheatByIndex(int32 Index);
 	int32 BuyCategory = -1;      // -1 — выбор категории
 	bool bScoreboardOpen = false;
 
@@ -213,7 +217,11 @@ private:
 	void MarkSpawnT() { MarkSpawn(false); }
 	void MarkSpawnCT() { MarkSpawn(true); }
 	void MarkSpawn(bool bCT);
+	// закупка открыта, пока держим клавишу
 	void ToggleBuyMenu();
+	void SetBuyMenuOpen(bool bOpen);
+	void OpenBuyMenu()  { SetBuyMenuOpen(true); }
+	void CloseBuyMenu() { SetBuyMenuOpen(false); }
 	void ShowScoreboard() { bScoreboardOpen = true; }
 	void HideScoreboard() { bScoreboardOpen = false; }
 	void DropCurrentWeapon();
@@ -243,7 +251,7 @@ private:
 	void ApplyWeaponVisuals();
 	void ApplyViewMode();
 
-	void ToggleCheatMenu() { bCheatMenuOpen = !bCheatMenuOpen; }
+	void ToggleCheatMenu();
 	void ToggleAimbot()   { bAimbot = !bAimbot; }
 	void ToggleESP()      { bESP = !bESP; }
 	void ToggleTrigger()  { bTriggerbot = !bTriggerbot; }

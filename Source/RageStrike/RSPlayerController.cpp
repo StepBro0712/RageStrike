@@ -2,6 +2,7 @@
 #include "RSMenu.h"
 #include "RSCharacter.h"
 #include "RSMenuCamera.h"
+#include "RSGameMode.h"
 #include "RSAudio.h"
 #include "Components/AudioComponent.h"
 #include "Engine/Engine.h"
@@ -32,7 +33,7 @@ void ARSPlayerController::BeginPlay()
 	}
 	if (GConfig->GetFloat(TEXT("RageStrike"), TEXT("Volume"), Value, GGameUserSettingsIni))
 	{
-		FApp::SetVolumeMultiplier(FMath::Clamp(Value, 0.f, 1.f));
+		RSAudio::SetMasterVolume(FMath::Clamp(Value, 0.f, 1.f));
 	}
 
 	// ник: сохранённый или имя пользователя Windows как заготовка
@@ -61,9 +62,13 @@ void ARSPlayerController::SetupInputComponent()
 {
 	Super::SetupInputComponent();
 
-	// прямые привязки: не зависят от ActionMappings в конфиге
-	InputComponent->BindKey(EKeys::Escape, IE_Pressed, this, &ARSPlayerController::ToggleMenu);
-	InputComponent->BindKey(EKeys::P, IE_Pressed, this, &ARSPlayerController::ToggleMenu);
+	// Прямые привязки: не зависят от ActionMappings в конфиге.
+	// bExecuteWhenPaused обязателен — иначе на стартовом меню, где стоит пауза,
+	// Esc не доходит до контроллера и меню не закрывается.
+	InputComponent->BindKey(EKeys::Escape, IE_Pressed, this,
+		&ARSPlayerController::ToggleMenu).bExecuteWhenPaused = true;
+	InputComponent->BindKey(EKeys::P, IE_Pressed, this,
+		&ARSPlayerController::ToggleMenu).bExecuteWhenPaused = true;
 }
 
 void ARSPlayerController::SaveUserFloat(const TCHAR* Key, float Value)
@@ -88,6 +93,14 @@ void ARSPlayerController::SetPlayerNick(const FString& NewNick)
 	if (ARSCharacter* RSPawn = Cast<ARSCharacter>(GetPawn()))
 	{
 		RSPawn->ApplyNick(PlayerNick);
+	}
+}
+
+void ARSPlayerController::ApplyMatchSettingsNow()
+{
+	if (ARSGameMode* GM = GetWorld()->GetAuthGameMode<ARSGameMode>())
+	{
+		GM->ApplyMatchSettings();
 	}
 }
 
@@ -120,13 +133,23 @@ void ARSPlayerController::OpenMenu(bool bStartup)
 		SAssignNew(MenuContainer, SWeakWidget).PossiblyNullContent(MenuWidget.ToSharedRef()), 100);
 
 	bShowMouseCursor = true;
-	FInputModeGameAndUI Mode;
+	// Только интерфейс: при GameAndUI мышь продолжала крутить камеру,
+	// а WASD уходили в персонажа прямо во время меню.
+	FInputModeUIOnly Mode;
 	Mode.SetWidgetToFocus(MenuWidget);
 	Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
-	Mode.SetHideCursorDuringCapture(false);
 	SetInputMode(Mode);
 
-	ShowMenuCamera();
+	// персонаж перестаёт слушать клавиши и мышь, пока меню открыто
+	SetIgnoreMoveInput(true);
+	SetIgnoreLookInput(true);
+
+	// Облётная камера и пауза — только для стартового меню. По Esc в бою
+	// игра продолжается, а вид остаётся от лица персонажа.
+	if (bStartup)
+	{
+		ShowMenuCamera();
+	}
 
 	if (!MenuMusic)
 	{
@@ -134,8 +157,8 @@ void ARSPlayerController::OpenMenu(bool bStartup)
 			RSAudio::Get(RSAudio::ESound::MusicMenu), 0.45f, 1.f, 0.f, nullptr, false, false);
 	}
 
-	// в одиночной игре ставим паузу, чтобы боты не расстреляли в меню
-	if (GetNetMode() == NM_Standalone)
+	// паузу ставим только на стартовом меню: в бою по Esc игра идёт дальше
+	if (bStartup && GetNetMode() == NM_Standalone)
 	{
 		UGameplayStatics::SetGamePaused(this, true);
 	}
@@ -208,6 +231,8 @@ void ARSPlayerController::CloseMenu()
 
 	bShowMouseCursor = false;
 	SetInputMode(FInputModeGameOnly());
+	SetIgnoreMoveInput(false);
+	SetIgnoreLookInput(false);
 	bMenuOpen = false;
 	bStartupMenu = false;
 }

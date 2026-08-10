@@ -25,6 +25,9 @@ private:
 	// вкладки: 0 играть, 1 настройки, 2 снаряжение, 3 новости, 4 заглушка
 	int32 ActiveTab = 0;
 
+	// правила поменяли в меню — сразу применяем их к текущему матчу
+	void PushRules();
+
 	TSharedRef<SWidget> MakeTopBar();
 	TSharedRef<SWidget> MakeTab(const FText& Label, int32 TabIndex);
 	TSharedRef<SWidget> MakePlayPanel();

@@ -33,6 +33,42 @@ namespace RSWeapons
 
 	UStaticMesh* LoadWeaponMesh(ERSWeapon W)
 	{
+		// У AK-47 и USP-S статик-мешей нет: их glTF импортировался только
+		// скелетным. Берём готовые модели из других папок, иначе оружие
+		// не видно ни у игрока, ни у ботов.
+		const TCHAR* Direct = nullptr;
+		switch (W)
+		{
+		case ERSWeapon::AK47:
+			Direct = TEXT("/Game/Fab/Soviet_Assault_Rifle/ak47fbx/StaticMeshes/ak47fbx.ak47fbx");
+			break;
+		case ERSWeapon::USP:
+		case ERSWeapon::Glock:
+		case ERSWeapon::P250:
+		case ERSWeapon::Tec9:
+		case ERSWeapon::FiveSeven:
+			Direct = TEXT("/Game/Weapons/Pistol/Meshes/SM_Pistol_G01.SM_Pistol_G01");
+			break;
+		default:
+			break;
+		}
+		if (Direct)
+		{
+			static TMap<FString, UStaticMesh*> DirectCache;
+			const FString DKey(Direct);
+			if (UStaticMesh** Found = DirectCache.Find(DKey))
+			{
+				return *Found;
+			}
+			UStaticMesh* Loaded = LoadObject<UStaticMesh>(nullptr, Direct);
+			if (Loaded)
+			{
+				Loaded->AddToRoot();
+			}
+			DirectCache.Add(DKey, Loaded);
+			return Loaded;
+		}
+
 		const TCHAR* Name = MeshAssetName(W);
 		if (!Name)
 		{
@@ -66,13 +102,32 @@ namespace RSWeapons
 
 	float RealLength(ERSWeapon W)
 	{
-		switch (Get(W).Slot)
+		// настоящая длина каждого ствола в сантиметрах: одна цифра на весь
+		// класс делала MP7 длиннее автомата
+		switch (W)
 		{
-		case ERSSlot::Secondary: return 22.f;
-		case ERSSlot::Knife:     return 30.f;
-		case ERSSlot::Grenade:   return 12.f;
-		default:
-			return (Get(W).Mesh == ERSMeshKind::Sniper) ? 120.f : 90.f;
+		case ERSWeapon::Knife:     return 30.f;
+		case ERSWeapon::Glock:     return 19.f;
+		case ERSWeapon::USP:       return 22.f;
+		case ERSWeapon::P250:      return 18.f;
+		case ERSWeapon::Deagle:    return 27.f;
+		case ERSWeapon::Tec9:      return 26.f;
+		case ERSWeapon::FiveSeven: return 21.f;
+		case ERSWeapon::MP9:       return 51.f;
+		case ERSWeapon::MAC10:     return 44.f;
+		case ERSWeapon::UMP45:     return 69.f;
+		case ERSWeapon::P90:       return 50.f;
+		case ERSWeapon::Nova:      return 100.f;
+		case ERSWeapon::XM1014:    return 104.f;
+		case ERSWeapon::GalilAR:   return 84.f;
+		case ERSWeapon::FAMAS:     return 76.f;
+		case ERSWeapon::AK47:      return 88.f;
+		case ERSWeapon::M4A4:      return 100.f;
+		case ERSWeapon::AUG:       return 79.f;
+		case ERSWeapon::SG553:     return 84.f;
+		case ERSWeapon::SSG08:     return 108.f;
+		case ERSWeapon::AWP:       return 117.f;
+		default:                   return 12.f; // гранаты
 		}
 	}
 

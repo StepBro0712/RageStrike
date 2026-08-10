@@ -56,15 +56,53 @@ void ARSWeaponPickup::OnRep_Weapon()
 
 void ARSWeaponPickup::ApplyMesh()
 {
-	switch (RSWeapons::Get(WeaponType).Mesh)
+	// сначала пробуем модель именно того оружия, что выбросили
+	UStaticMesh* Exact = RSWeapons::LoadWeaponMesh(WeaponType);
+	if (!Exact)
 	{
-	case ERSMeshKind::Sniper: Mesh->SetStaticMesh(SniperAsset); break;
-	case ERSMeshKind::Pistol: Mesh->SetStaticMesh(PistolAsset); break;
-	default:                  Mesh->SetStaticMesh(RifleAsset);  break;
+		switch (RSWeapons::Get(WeaponType).Mesh)
+		{
+		case ERSMeshKind::Sniper: Exact = SniperAsset; break;
+		case ERSMeshKind::Pistol: Exact = PistolAsset; break;
+		default:                  Exact = RifleAsset;  break;
+		}
 	}
-	// кладём плашмя, стволом вбок
-	Mesh->SetRelativeRotation(FRotator(0.f, 0.f, 90.f));
-	Mesh->SetRelativeLocation(FVector(0.f, 0.f, -40.f));
+	Mesh->SetStaticMesh(Exact);
+	if (!Exact)
+	{
+		return;
+	}
+
+	// приводим к реальному размеру, как в руках
+	const FVector Extent = Exact->GetBounds().BoxExtent;
+	const float Longest = FMath::Max3(Extent.X, Extent.Y, Extent.Z) * 2.f;
+	const float Fit = (Longest > 0.01f) ? RSWeapons::RealLength(WeaponType) / Longest : 1.f;
+	Mesh->SetRelativeScale3D(FVector(Fit));
+
+	// Кладём плашмя. Фиксированный поворот не годится: у моделей от разных
+	// авторов ствол вытянут по разным осям, поэтому считаем поворот так,
+	// чтобы длинная ось меша легла горизонтально, а самая тонкая смотрела вверх.
+	const FVector Axes[3] = { FVector::XAxisVector, FVector::YAxisVector, FVector::ZAxisVector };
+	const float Sizes[3] = { Extent.X, Extent.Y, Extent.Z };
+
+	int32 LongIdx = 0, ThinIdx = 0;
+	for (int32 i = 1; i < 3; i++)
+	{
+		if (Sizes[i] > Sizes[LongIdx]) { LongIdx = i; }
+		if (Sizes[i] < Sizes[ThinIdx]) { ThinIdx = i; }
+	}
+	if (ThinIdx == LongIdx)
+	{
+		ThinIdx = (LongIdx + 1) % 3;
+	}
+
+	// матрица переводит X в длинную ось и Z в тонкую; нам нужен обратный поворот
+	const FQuat Lay = FRotationMatrix::MakeFromXZ(Axes[LongIdx], Axes[ThinIdx])
+		.ToQuat().Inverse();
+	Mesh->SetRelativeRotation(Lay);
+
+	const float HalfThickness = Sizes[ThinIdx] * Fit;
+	Mesh->SetRelativeLocation(FVector(0.f, 0.f, -GroundOffset + HalfThickness));
 }
 
 void ARSWeaponPickup::DropAt(ERSWeapon Type, const FVector& From)
@@ -81,12 +119,18 @@ void ARSWeaponPickup::DropAt(ERSWeapon Type, const FVector& From)
 	if (GetWorld()->LineTraceSingleByChannel(Hit, Start, Start - FVector(0.f, 0.f, 1000.f),
 		ECC_Visibility, Params))
 	{
-		SetActorLocation(Hit.ImpactPoint + FVector(0.f, 0.f, 45.f));
+		SetActorLocation(Hit.ImpactPoint + FVector(0.f, 0.f, GroundOffset));
+		// разворачиваем по случайному углу и кладём вдоль поверхности,
+		// чтобы стволы не лежали все одинаково
+		SetActorRotation(FRotator(0.f, FMath::FRandRange(0.f, 360.f), 0.f));
 	}
 	else
 	{
 		SetActorLocation(From);
 	}
+
+	// меш пересчитываем после поворота: он зависит от габаритов модели
+	ApplyMesh();
 
 	SetLifeSpan(60.f); // мусор не копится до конца матча
 }

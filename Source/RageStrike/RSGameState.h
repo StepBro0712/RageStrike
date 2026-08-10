@@ -66,6 +66,13 @@ public:
 	UPROPERTY(Replicated)
 	int32 TeamSize = 5;
 
+	// Закупка не заканчивается вместе с фазой: как в CS, докупиться можно
+	// ещё 15 секунд после начала раунда.
+	UPROPERTY(Replicated)
+	float BuyEndsAt = 0.f;
+
+	bool IsBuyTime() const;
+
 	float GetTimeLeft() const;
 
 	// killfeed: сервер рассылает, клиенты копят локально, HUD рисует

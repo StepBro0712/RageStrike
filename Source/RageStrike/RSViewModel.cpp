@@ -51,6 +51,16 @@ namespace RSViewModel
 
 	const FRSViewModel* Get(ERSWeapon Weapon)
 	{
+		// Скелетная вьюмодель пока выключена: у скелета AK-47 габариты в
+		// исходнике меньше сантиметра, автоподбор масштаба раздувает модель
+		// на пол-экрана. Пока посадка не выставлена вручную, показываем
+		// статик-меши — они сидят правильно.
+		static constexpr bool bEnabled = false;
+		if (!bEnabled)
+		{
+			return nullptr;
+		}
+
 		const TCHAR* Pack = PackageFor(Weapon);
 		if (!Pack)
 		{

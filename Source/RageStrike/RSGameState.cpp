@@ -15,6 +15,17 @@ void ARSGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLife
 	DOREPLIFETIME(ARSGameState, RoundsToWin);
 	DOREPLIFETIME(ARSGameState, HalfTimeRound);
 	DOREPLIFETIME(ARSGameState, TeamSize);
+	DOREPLIFETIME(ARSGameState, BuyEndsAt);
+}
+
+bool ARSGameState::IsBuyTime() const
+{
+	// в перерыве всегда, а в бою — пока не вышло докупочное время
+	if (Phase == ERSPhase::Intermission)
+	{
+		return true;
+	}
+	return Phase == ERSPhase::Live && GetWorld()->GetTimeSeconds() < BuyEndsAt;
 }
 
 float ARSGameState::GetTimeLeft() const

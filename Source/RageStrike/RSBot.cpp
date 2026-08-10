@@ -99,6 +99,63 @@ void ARSBot::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimePr
 	DOREPLIFETIME(ARSBot, Deaths);
 	DOREPLIFETIME(ARSBot, BotNumber);
 	DOREPLIFETIME(ARSBot, Weapon);
+	DOREPLIFETIME(ARSBot, Nick);
+}
+
+FString ARSBot::MakeBotNick(int32 Seed)
+{
+	// Ники собираем из двух списков плюс иногда цифры — так состав выглядит
+	// живым, а не «Бот 1..5». Seed берётся из номера бота, поэтому имя
+	// стабильно и одинаково у сервера с клиентами.
+	static const TCHAR* First[] = {
+		TEXT("Rush"), TEXT("Silent"), TEXT("Vex"), TEXT("Nova"), TEXT("Kilo"),
+		TEXT("Drift"), TEXT("Frost"), TEXT("Ember"), TEXT("Zed"), TEXT("Onyx"),
+		TEXT("Grim"), TEXT("Pulse"), TEXT("Havoc"), TEXT("Lynx"), TEXT("Rogue"),
+		TEXT("Blitz"), TEXT("Crow"), TEXT("Dusk"), TEXT("Flick"), TEXT("Ghost")
+	};
+	static const TCHAR* Second[] = {
+		TEXT("shot"), TEXT("wave"), TEXT("byte"), TEXT("edge"), TEXT("fang"),
+		TEXT("core"), TEXT("dash"), TEXT("hunt"), TEXT("rain"), TEXT("wolf"),
+		TEXT(""), TEXT(""), TEXT("_ru"), TEXT("xd"), TEXT("77")
+	};
+
+	FRandomStream Rand(Seed * 7919 + 13);
+	const FString A = First[Rand.RandRange(0, UE_ARRAY_COUNT(First) - 1)];
+	const FString B = Second[Rand.RandRange(0, UE_ARRAY_COUNT(Second) - 1)];
+
+	FString Result = A + B;
+	// иногда добавляем число, как это делают живые игроки
+	if (Rand.FRand() < 0.3f)
+	{
+		Result += FString::FromInt(Rand.RandRange(2, 99));
+	}
+	return Result;
+}
+
+void ARSBot::UpdateFootsteps(float DeltaTime)
+{
+	if (Health <= 0.f || GetCharacterMovement()->IsFalling())
+	{
+		return;
+	}
+	const float Speed = GetVelocity().Size2D();
+	if (Speed < 40.f)
+	{
+		StepDistance = 0.f;
+		return;
+	}
+
+	// шаг раз в 180 см пути, как у игрока
+	StepDistance += Speed * DeltaTime;
+	if (StepDistance < 180.f)
+	{
+		return;
+	}
+	StepDistance = 0.f;
+
+	const bool bRunning = Speed > 300.f;
+	RSAudio::PlayAt(this, RSAudio::GetStepSound(bRunning), GetActorLocation(),
+		bRunning ? 1.f : 0.7f, RSAudio::ERange::Step, /*bFromOther*/ true);
 }
 
 void ARSBot::OnRep_Weapon()
@@ -318,6 +375,9 @@ void ARSBot::Tick(float DeltaTime)
 		GunMesh->SetRelativeLocation(GunHandLoc - RelQuat.RotateVector(GunPivot));
 	}
 
+	// шаги считаем у всех копий: движение реплицируется, звук локальный
+	UpdateFootsteps(DeltaTime);
+
 	// ИИ работает только на сервере; клиенты получают движение по репликации
 	if (!HasAuthority() || Health <= 0.f)
 	{
@@ -511,10 +571,8 @@ void ARSBot::MulticastShot_Implementation(FVector Start, FVector End)
 	const bool bBig = RSWeapons::Get(Weapon).Mesh == ERSMeshKind::Sniper;
 	ARSTracer::Spawn(GetWorld(), Start, End, bBig);
 
-	if (USoundBase* Shot = RSAudio::GetFireSound(Weapon))
-	{
-		UGameplayStatics::PlaySoundAtLocation(this, Shot, Start, 0.9f);
-	}
+	RSAudio::PlayAt(this, RSAudio::GetFireSound(Weapon), Start, 0.9f,
+		RSAudio::ERange::Gun, /*bFromOther*/ true);
 }
 
 void ARSBot::OnRep_Health()

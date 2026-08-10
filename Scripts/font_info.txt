@@ -1,0 +1,5 @@
+ttf exists: True
+face: <Object '/Game/UI/Fonts/FF_RSHud.FF_RSHud' (0x000001FEDDBA7B00) Class 'FontFace'>
+font: <Object '/Game/UI/Fonts/F_RSHud.F_RSHud' (0x000001FED58CD400) Class 'Font'>
+cache set
+composite: <class 'CompositeFont'>

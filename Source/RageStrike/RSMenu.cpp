@@ -4,6 +4,7 @@
 #include "RSWeaponData.h"
 #include "RSNet.h"
 #include "RSMatchSettings.h"
+#include "RSAudio.h"
 #include "HAL/PlatformApplicationMisc.h"
 #include "GameFramework/GameUserSettings.h"
 #include "Engine/Engine.h"
@@ -234,6 +235,16 @@ TSharedRef<SWidget> SRSMenu::MakeTab(const FText& Label, int32 TabIndex)
 		];
 }
 
+void SRSMenu::PushRules()
+{
+	// Без этого настройки лежали в конфиге, а матч продолжал играть по старым:
+	// состав ботов и число раундов не менялись до перезапуска уровня.
+	if (PC.IsValid())
+	{
+		PC->ApplyMatchSettingsNow();
+	}
+}
+
 TSharedRef<SWidget> SRSMenu::MakeTopBar()
 {
 	return SNew(SBorder)
@@ -390,8 +401,8 @@ TSharedRef<SWidget> SRSMenu::MakePlayPanel()
 				{
 					return FText::FromString(FString::Printf(TEXT("%d"), RSMatch::GetTeamSize()));
 				}),
-				[]() { RSMatch::SetTeamSize(RSMatch::GetTeamSize() - 1); },
-				[]() { RSMatch::SetTeamSize(RSMatch::GetTeamSize() + 1); })
+				[this]() { RSMatch::SetTeamSize(RSMatch::GetTeamSize() - 1); PushRules(); },
+				[this]() { RSMatch::SetTeamSize(RSMatch::GetTeamSize() + 1); PushRules(); })
 		]
 
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
@@ -403,8 +414,8 @@ TSharedRef<SWidget> SRSMenu::MakePlayPanel()
 					return FText::FromString(FString::Printf(TEXT("%d  (всего %d)"),
 						Win, RSMatch::RoundsTotalFor(Win)));
 				}),
-				[]() { RSMatch::SetRoundsToWin(RSMatch::GetRoundsToWin() - 1); },
-				[]() { RSMatch::SetRoundsToWin(RSMatch::GetRoundsToWin() + 1); })
+				[this]() { RSMatch::SetRoundsToWin(RSMatch::GetRoundsToWin() - 1); PushRules(); },
+				[this]() { RSMatch::SetRoundsToWin(RSMatch::GetRoundsToWin() + 1); PushRules(); })
 		]
 
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
@@ -414,15 +425,15 @@ TSharedRef<SWidget> SRSMenu::MakePlayPanel()
 				{
 					return FText::FromString(RSMatch::GetUseBots() ? TEXT("Да") : TEXT("Нет"));
 				}),
-				[]() { RSMatch::SetUseBots(!RSMatch::GetUseBots()); },
-				[]() { RSMatch::SetUseBots(!RSMatch::GetUseBots()); })
+				[this]() { RSMatch::SetUseBots(!RSMatch::GetUseBots()); PushRules(); },
+				[this]() { RSMatch::SetUseBots(!RSMatch::GetUseBots()); PushRules(); })
 		]
 
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f, 0.f, 0.f)
 		[
 			SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Regular", 11))
 			.ColorAndOpacity(MenuDim)
-			.Text(FText::FromString(TEXT("Правила применяются при создании матча или сервера")))
+			.Text(FText::FromString(TEXT("Правила применяются сразу, состав ботов подстраивается")))
 		]
 
 		// --- сетевая игра ---
@@ -570,10 +581,10 @@ TSharedRef<SWidget> SRSMenu::MakeSettingsPanel()
 		+ SVerticalBox::Slot().AutoHeight()
 		[
 			SNew(SSlider)
-			.Value_Lambda([]() { return FApp::GetVolumeMultiplier(); })
+			.Value_Lambda([]() { return RSAudio::GetMasterVolume(); })
 			.OnValueChanged_Lambda([this](float V)
 			{
-				FApp::SetVolumeMultiplier(V);
+				RSAudio::SetMasterVolume(V);
 				if (PC.IsValid()) { PC->SaveUserFloat(TEXT("Volume"), V); }
 			})
 		]

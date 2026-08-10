@@ -31,25 +31,7 @@ void ARSGameMode::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// правила матча задаёт тот, кто поднял сервер
-	RoundsToWin = RSMatch::GetRoundsToWin();
-	RoundsTotal = RSMatch::RoundsTotalFor(RoundsToWin);
-	HalfTimeRound = RSMatch::HalfTimeFor(RoundsToWin);
-
-	const int32 TeamSize = RSMatch::GetTeamSize();
-	const bool bBots = RSMatch::GetUseBots();
-	// боты добирают состав: противников по размеру команды, своих на одного
-	// меньше — одно место занимает сам игрок
-	BotCount = bBots ? TeamSize : 0;
-	TeammateCount = bBots ? FMath::Max(0, TeamSize - 1) : 0;
-
-	if (ARSGameState* State = RSState())
-	{
-		State->RoundsTotal = RoundsTotal;
-		State->RoundsToWin = RoundsToWin;
-		State->HalfTimeRound = HalfTimeRound;
-		State->TeamSize = TeamSize;
-	}
+	ApplyMatchSettings();
 
 	// арена: сервер задаёт Seed, клиенты строят такую же локально по репликации
 	FActorSpawnParameters SP;
@@ -72,6 +54,30 @@ void ARSGameMode::BeginPlay()
 	// расстановка ждёт, пока физика зарегистрирует коллизию карты:
 	// иначе трассировки не находят пол и все проваливаются под карту
 	GetWorldTimerManager().SetTimer(StartTimer, this, &ARSGameMode::PlaceEveryone, 0.25f, false);
+}
+
+void ARSGameMode::ApplyMatchSettings()
+{
+	// правила матча задаёт тот, кто поднял сервер
+	RoundsToWin = RSMatch::GetRoundsToWin();
+	RoundsTotal = RSMatch::RoundsTotalFor(RoundsToWin);
+	HalfTimeRound = RSMatch::HalfTimeFor(RoundsToWin);
+
+	const int32 TeamSize = RSMatch::GetTeamSize();
+
+	UE_LOG(LogTemp, Log, TEXT("RS/состав: ApplyMatchSettings: TeamSize=%d, боты=%d, RoundsToWin=%d, состав: %s"),
+		TeamSize, RSMatch::GetUseBots() ? 1 : 0, RoundsToWin, *RosterDump());
+
+	if (ARSGameState* State = RSState())
+	{
+		State->RoundsTotal = RoundsTotal;
+		State->RoundsToWin = RoundsToWin;
+		State->HalfTimeRound = HalfTimeRound;
+		State->TeamSize = TeamSize;
+	}
+
+	// состав подгоняем под новый размер команды прямо сейчас
+	RebalanceRoster();
 }
 
 void ARSGameMode::PlaceEveryone()
@@ -121,7 +127,7 @@ void ARSGameMode::StartBuyPhase()
 		It->RespawnForRound(ARSArena::FindSpawnPoint(GetWorld(), It->Team));
 	}
 
-	EnsureBots();
+	RebalanceRoster();
 	for (TActorIterator<ARSBot> It(GetWorld()); It; ++It)
 	{
 		It->RespawnForRound(ARSArena::FindSpawnPoint(GetWorld(), It->Team));
@@ -130,6 +136,8 @@ void ARSGameMode::StartBuyPhase()
 	State->Phase = ERSPhase::Intermission;
 	State->Announcement = FString::Printf(TEXT("Закупка перед раундом %d — B"), State->RoundNumber);
 	State->PhaseEndsAt = GetWorld()->GetTimeSeconds() + BuySeconds;
+	// докупиться можно ещё 15 секунд после начала раунда, как в CS
+	State->BuyEndsAt = State->PhaseEndsAt + ExtraBuySeconds;
 	GetWorldTimerManager().SetTimer(PhaseTimer, this, &ARSGameMode::StartRound, BuySeconds, false);
 }
 
@@ -280,56 +288,133 @@ void ARSGameMode::SwapSides()
 	// новая половина — экономика серий начинается заново
 	LossStreak[0] = LossStreak[1] = 0;
 
+	UE_LOG(LogTemp, Log, TEXT("RS/состав: SwapSides начало: %s"), *RosterDump());
+	bInSwapSides = true;
+
 	// стороны меняют и игроки, и боты — составы команд остаются прежними
 	for (TActorIterator<ARSCharacter> It(GetWorld()); It; ++It)
 	{
 		It->SetTeam(It->Team == ERSTeam::CT ? ERSTeam::T : ERSTeam::CT);
 	}
+	UE_LOG(LogTemp, Log, TEXT("RS/состав: SwapSides, игроки перевёрнуты: %s"), *RosterDump());
+
 	for (TActorIterator<ARSBot> It(GetWorld()); It; ++It)
 	{
 		It->SetTeam(It->Team == ERSTeam::CT ? ERSTeam::T : ERSTeam::CT);
 	}
+
+	bInSwapSides = false;
+	UE_LOG(LogTemp, Log, TEXT("RS/состав: SwapSides конец: %s"), *RosterDump());
+
+	// свап состав не меняет, но пересчёт дешёвый и чинит перекос,
+	// если он всё-таки откуда-то взялся
+	RebalanceRoster();
 }
 
-ERSTeam ARSGameMode::GetBotTeam() const
+FString ARSGameMode::RosterDump() const
 {
-	if (const APlayerController* PC = GetWorld()->GetFirstPlayerController())
+	FString Out;
+	for (int32 Side = 0; Side < 2; Side++)
 	{
-		if (const ARSCharacter* Player = Cast<ARSCharacter>(PC->GetPawn()))
+		const ERSTeam Team = (Side == 0) ? ERSTeam::CT : ERSTeam::T;
+
+		int32 Players = 0;
+		for (TActorIterator<ARSCharacter> It(GetWorld()); It; ++It)
 		{
-			return Player->Team == ERSTeam::CT ? ERSTeam::T : ERSTeam::CT;
+			if (It->Team == Team)
+			{
+				Players++;
+			}
 		}
+
+		// AllActors — чтобы увидеть и тех, кого уже уничтожили в этом кадре
+		TArray<FString> Names;
+		for (TActorIterator<ARSBot> It(GetWorld(), ARSBot::StaticClass(), EActorIteratorFlags::AllActors); It; ++It)
+		{
+			if (It->Team != Team)
+			{
+				continue;
+			}
+			Names.Add(FString::Printf(TEXT("%s%s%s"), *It->Nick,
+				It->Health > 0.f ? TEXT("") : TEXT("|мёртв"),
+				(!IsValid(*It) || It->IsActorBeingDestroyed()) ? TEXT("|уничтожается") : TEXT("")));
+		}
+
+		Out += FString::Printf(TEXT("%s игроков=%d ботов=%d [%s]  "),
+			Side == 0 ? TEXT("CT") : TEXT("T"), Players, Names.Num(), *FString::Join(Names, TEXT(", ")));
 	}
-	return ERSTeam::T;
+	return Out;
 }
 
 void ARSGameMode::OnPlayerTeamChanged()
 {
-	// составы теперь постоянные: перекидывать ботов нельзя, иначе
-	// вместе с командой у них сбрасывалась бы принадлежность и счёт
+	RebalanceRoster();
 }
 
-void ARSGameMode::EnsureBots()
+void ARSGameMode::RebalanceRoster()
 {
-	int32 Have[2] = { 0, 0 };
-	for (TActorIterator<ARSBot> It(GetWorld()); It; ++It)
+	// Внутри SwapSides мир перевёрнут наполовину: игроки уже сменили сторону,
+	// боты ещё нет. Пересчёт по такому состоянию убивал «лишнего» бота на
+	// стороне игрока и тут же спавнил нового напротив — он и был лишним.
+	if (bInSwapSides)
 	{
-		Have[It->Team == ERSTeam::CT ? 0 : 1]++;
+		return;
 	}
 
-	const ERSTeam BotTeam = GetBotTeam();
-	const ERSTeam PlayerTeam = (BotTeam == ERSTeam::CT) ? ERSTeam::T : ERSTeam::CT;
+	const int32 TeamSize = RSMatch::GetTeamSize();
+	const bool bBots = RSMatch::GetUseBots();
 
-	const int32 NeedEnemy = BotCount - Have[BotTeam == ERSTeam::CT ? 0 : 1];
-	for (int32 i = 0; i < NeedEnemy; i++)
+	for (int32 Side = 0; Side < 2; Side++)
 	{
-		SpawnBotAt(ARSArena::FindSpawnPoint(GetWorld(), BotTeam), BotTeam);
-	}
+		const ERSTeam Team = (Side == 0) ? ERSTeam::CT : ERSTeam::T;
 
-	const int32 NeedMate = TeammateCount - Have[PlayerTeam == ERSTeam::CT ? 0 : 1];
-	for (int32 i = 0; i < NeedMate; i++)
-	{
-		SpawnBotAt(ARSArena::FindSpawnPoint(GetWorld(), PlayerTeam), PlayerTeam);
+		// места в составе сначала занимают живые игроки, остальное добирают боты
+		int32 Humans = 0;
+		for (TActorIterator<ARSCharacter> It(GetWorld()); It; ++It)
+		{
+			if (IsValid(*It) && It->Team == Team)
+			{
+				Humans++;
+			}
+		}
+
+		TArray<ARSBot*> Bots;
+		for (TActorIterator<ARSBot> It(GetWorld()); It; ++It)
+		{
+			if (IsValid(*It) && It->Team == Team)
+			{
+				Bots.Add(*It);
+			}
+		}
+
+		const int32 Target = bBots ? FMath::Max(0, TeamSize - Humans) : 0;
+		const int32 Extra = Bots.Num() - Target;
+		if (Extra == 0)
+		{
+			continue;
+		}
+
+		UE_LOG(LogTemp, Log, TEXT("RS/состав:   сторона %s: игроков=%d, ботов=%d, цель ботов=%d"),
+			Side == 0 ? TEXT("CT") : TEXT("T"), Humans, Bots.Num(), Target);
+
+		// лишних выгоняем, начиная с уже убитых
+		if (Extra > 0)
+		{
+			Bots.Sort([](const ARSBot& A, const ARSBot& B) { return A.Health < B.Health; });
+			for (int32 i = 0; i < Extra; i++)
+			{
+				UE_LOG(LogTemp, Log, TEXT("RS/состав:   убираю %s (hp=%.0f)"), *Bots[i]->Nick, Bots[i]->Health);
+				Bots[i]->Destroy();
+			}
+		}
+
+		// недостающих досаживаем на точки своей стороны
+		for (int32 i = 0; i < -Extra; i++)
+		{
+			SpawnBotAt(ARSArena::FindSpawnPoint(GetWorld(), Team), Team);
+		}
+
+		UE_LOG(LogTemp, Log, TEXT("RS/состав: состав после правки: %s"), *RosterDump());
 	}
 }
 
@@ -341,5 +426,9 @@ void ARSGameMode::SpawnBotAt(const FVector& Location, ERSTeam Team)
 	{
 		Bot->SetTeam(Team);
 		Bot->BotNumber = ++NextBotNumber;
+		Bot->Nick = ARSBot::MakeBotNick(Bot->BotNumber);
+
+		UE_LOG(LogTemp, Log, TEXT("RS/состав:   спавн %s в %s"), *Bot->Nick,
+			Team == ERSTeam::CT ? TEXT("CT") : TEXT("T"));
 	}
 }

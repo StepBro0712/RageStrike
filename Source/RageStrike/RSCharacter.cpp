@@ -42,7 +42,8 @@ FString RSCombatantName(const AActor* Who)
 {
 	if (const ARSBot* Bot = Cast<ARSBot>(Who))
 	{
-		return FString::Printf(TEXT("Бот %d"), Bot->BotNumber);
+		// у ботов есть свой ник, номер оставляем только как запасной вариант
+		return Bot->Nick.IsEmpty() ? FString::Printf(TEXT("Бот %d"), Bot->BotNumber) : Bot->Nick;
 	}
 	if (const ARSCharacter* Player = Cast<ARSCharacter>(Who))
 	{
@@ -395,7 +396,7 @@ void ARSCharacter::AddMoney(int32 Amount)
 void ARSCharacter::ServerBuyWeapon_Implementation(ERSWeapon Weapon)
 {
 	const ARSGameState* State = GetWorld()->GetGameState<ARSGameState>();
-	if (!State || State->Phase != ERSPhase::Intermission)
+	if (!State || !State->IsBuyTime())
 	{
 		return; // покупки только между раундами
 	}
@@ -428,7 +429,12 @@ void ARSCharacter::ServerBuyWeapon_Implementation(ERSWeapon Weapon)
 	{
 		if (bHasPrimary)
 		{
-			return; // сначала выбросить старое (G)
+			if (PrimaryType == Weapon)
+			{
+				return; // уже это и держим
+			}
+			// как в CS: старое основное падает на землю, в руки идёт новое
+			DropWeapon(PrimaryType);
 		}
 		Money -= Def.Price;
 		GiveWeapon(Weapon);
@@ -443,7 +449,11 @@ void ARSCharacter::ServerBuyWeapon_Implementation(ERSWeapon Weapon)
 		{
 			return;
 		}
-		// новый пистолет заменяет старый
+		// старый пистолет тоже падает на землю, а не исчезает
+		if (bHasSecondary)
+		{
+			DropWeapon(SecondaryType);
+		}
 		Money -= Def.Price;
 		GiveWeapon(Weapon);
 		CurrentWeapon = Weapon;
@@ -454,7 +464,7 @@ void ARSCharacter::ServerBuyWeapon_Implementation(ERSWeapon Weapon)
 void ARSCharacter::ServerBuyArmor_Implementation(bool bWithHelmet)
 {
 	const ARSGameState* State = GetWorld()->GetGameState<ARSGameState>();
-	if (!State || State->Phase != ERSPhase::Intermission)
+	if (!State || !State->IsBuyTime())
 	{
 		return;
 	}
@@ -572,15 +582,8 @@ void ARSCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 	PlayerInputComponent->BindAction("Fire", IE_Released, this, &ARSCharacter::StopFire);
 	PlayerInputComponent->BindAction("Reload", IE_Pressed, this, &ARSCharacter::Reload);
 
-	PlayerInputComponent->BindAction("ToggleAimbot", IE_Pressed, this, &ARSCharacter::ToggleAimbot);
-	PlayerInputComponent->BindAction("ToggleESP", IE_Pressed, this, &ARSCharacter::ToggleESP);
-	PlayerInputComponent->BindAction("ToggleTrigger", IE_Pressed, this, &ARSCharacter::ToggleTrigger);
-	PlayerInputComponent->BindAction("ToggleNoRecoil", IE_Pressed, this, &ARSCharacter::ToggleNoRecoil);
-	PlayerInputComponent->BindAction("ToggleSpeed", IE_Pressed, this, &ARSCharacter::ToggleSpeed);
-	PlayerInputComponent->BindAction("ToggleSilent", IE_Pressed, this, &ARSCharacter::ToggleSilent);
-	PlayerInputComponent->BindAction("ToggleGod", IE_Pressed, this, &ARSCharacter::ToggleGod);
-	// деньги: прямая привязка, в конфиге маппинга под F8 нет
-	PlayerInputComponent->BindKey(EKeys::F8, IE_Pressed, this, &ARSCharacter::ToggleMoney);
+	// Клавиш F1-F8 под читы больше нет: они переключаются мышью в оверлее,
+	// который открывается на Del или Insert.
 
 	// B освободили под закупку, управление ботами ушло на F9-F12
 	PlayerInputComponent->BindKey(EKeys::F9, IE_Pressed, this, &ARSCharacter::AddBot);
@@ -588,7 +591,9 @@ void ARSCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 	// F11/F12 отмечают спавны команд там, где стоит игрок
 	PlayerInputComponent->BindKey(EKeys::F11, IE_Pressed, this, &ARSCharacter::MarkSpawnT);
 	PlayerInputComponent->BindKey(EKeys::F12, IE_Pressed, this, &ARSCharacter::MarkSpawnCT);
-	PlayerInputComponent->BindKey(EKeys::B, IE_Pressed, this, &ARSCharacter::ToggleBuyMenu);
+	// закупка держится на зажатой клавише, как просили
+	PlayerInputComponent->BindKey(EKeys::B, IE_Pressed, this, &ARSCharacter::OpenBuyMenu);
+	PlayerInputComponent->BindKey(EKeys::B, IE_Released, this, &ARSCharacter::CloseBuyMenu);
 	PlayerInputComponent->BindKey(EKeys::G, IE_Pressed, this, &ARSCharacter::DropCurrentWeapon);
 	PlayerInputComponent->BindKey(EKeys::Tab, IE_Pressed, this, &ARSCharacter::ShowScoreboard);
 	PlayerInputComponent->BindKey(EKeys::Tab, IE_Released, this, &ARSCharacter::HideScoreboard);
@@ -657,8 +662,17 @@ void ARSCharacter::UpdateArmsAnimation()
 
 void ARSCharacter::ToggleBuyMenu()
 {
+	SetBuyMenuOpen(!bBuyMenuOpen);
+}
+
+void ARSCharacter::SetBuyMenuOpen(bool bOpen)
+{
+	if (bBuyMenuOpen == bOpen)
+	{
+		return;
+	}
 	// открывается всегда: подсказка внутри объяснит, почему покупка недоступна
-	bBuyMenuOpen = !bBuyMenuOpen;
+	bBuyMenuOpen = bOpen;
 	BuyCategory = -1;
 
 	// в закупке нужен курсор: карточки кликаются мышью
@@ -683,6 +697,51 @@ void ARSCharacter::ToggleBuyMenu()
 				PC->SetInputMode(FInputModeGameOnly());
 			}
 		}
+	}
+}
+
+void ARSCharacter::ToggleCheatMenu()
+{
+	bCheatMenuOpen = !bCheatMenuOpen;
+
+	// в оверлее читы переключаются мышью, поэтому нужен курсор
+	if (APlayerController* PC = Cast<APlayerController>(GetController()))
+	{
+		if (PC->IsLocalController() && !bBuyMenuOpen)
+		{
+			PC->bShowMouseCursor = bCheatMenuOpen;
+			if (bCheatMenuOpen)
+			{
+				FInputModeGameAndUI Mode;
+				Mode.SetLockMouseToViewportBehavior(EMouseLockMode::LockOnCapture);
+				Mode.SetHideCursorDuringCapture(false);
+				PC->SetInputMode(Mode);
+				int32 SizeX = 0, SizeY = 0;
+				PC->GetViewportSize(SizeX, SizeY);
+				PC->SetMouseLocation(SizeX / 2, SizeY / 2);
+			}
+			else
+			{
+				PC->SetInputMode(FInputModeGameOnly());
+			}
+		}
+	}
+}
+
+void ARSCharacter::ToggleCheatByIndex(int32 Index)
+{
+	// порядок совпадает со строками оверлея
+	switch (Index)
+	{
+	case 0: bAimbot = !bAimbot; break;
+	case 1: bESP = !bESP; break;
+	case 2: bTriggerbot = !bTriggerbot; break;
+	case 3: bNoRecoilSpread = !bNoRecoilSpread; break;
+	case 4: bSpeedhack = !bSpeedhack; SyncCheats(); break;
+	case 5: bSilentAim = !bSilentAim; break;
+	case 6: bGodMode = !bGodMode; SyncCheats(); break;
+	case 7: bInfiniteMoney = !bInfiniteMoney; SyncCheats(); break;
+	default: break;
 	}
 }
 
@@ -775,10 +834,8 @@ void ARSCharacter::UpdateFootsteps(float DeltaTime)
 	// приземление
 	if (bWasFallingAudio && !bFalling)
 	{
-		if (USoundBase* Snd = RSAudio::Get(RSAudio::ESound::Land))
-		{
-			UGameplayStatics::PlaySoundAtLocation(this, Snd, GetActorLocation(), 0.8f);
-		}
+		RSAudio::PlayAt(this, RSAudio::Get(RSAudio::ESound::Land),
+			GetActorLocation(), 0.8f, RSAudio::ERange::Step);
 		StepDistance = 0.f;
 	}
 	bWasFallingAudio = bFalling;
@@ -805,13 +862,10 @@ void ARSCharacter::UpdateFootsteps(float DeltaTime)
 
 	const bool bQuiet = bWalking || bIsCrouched;
 	const bool bRunning = !bQuiet && Speed > GetWeaponMaxSpeed() * 0.6f;
-	USoundBase* Snd = RSAudio::Get(bRunning ? RSAudio::ESound::StepRun : RSAudio::ESound::StepWalk);
-	if (Snd)
-	{
-		// тихая ходьба и есть тихая ходьба: слышно только вблизи
-		UGameplayStatics::PlaySoundAtLocation(this, Snd, GetActorLocation(),
-			bQuiet ? 0.25f : (bRunning ? 1.f : 0.7f));
-	}
+	// тихая ходьба и есть тихая ходьба: слышно только вблизи
+	RSAudio::PlayAt(this, RSAudio::GetStepSound(bRunning), GetActorLocation(),
+		bQuiet ? 0.25f : (bRunning ? 1.f : 0.7f), RSAudio::ERange::Step,
+		!IsLocallyControlled());
 }
 
 void ARSCharacter::MarkSpawn(bool bCT)
@@ -884,7 +938,21 @@ void ARSCharacter::ApplyWeaponVisuals()
 		return;
 	}
 
-	UStaticMesh* WeaponMesh = AKAsset;
+	// Пустые слоты означают нож: раньше заглушкой по умолчанию стоял автомат,
+	// и после сброса основного с пистолетом в руках оказывался калаш даже у КТ.
+	{
+		const ERSSlot Slot = RSWeapons::Get(CurrentWeapon).Slot;
+		const bool bSlotEmpty =
+			(Slot == ERSSlot::Primary && (!bHasPrimary || PrimaryType != CurrentWeapon))
+			|| (Slot == ERSSlot::Secondary && (!bHasSecondary || SecondaryType != CurrentWeapon))
+			|| (Slot == ERSSlot::Grenade && Grenades[RSWeapons::GrenadeIndex(CurrentWeapon)] <= 0);
+		if (bSlotEmpty)
+		{
+			CurrentWeapon = ERSWeapon::Knife;
+		}
+	}
+
+	UStaticMesh* WeaponMesh = KnifeAsset;
 	FVector MeshPivot = FVector::ZeroVector; // смещение центра модели от пивота
 	float FitFP = 0.f;                       // масштаб вьюмодели, 0 — как у мира
 	FVector HandLoc(-6.f, 2.f, -2.f);   // в руке тела (вид от третьего лица)
@@ -1217,6 +1285,23 @@ void ARSCharacter::StopWalk()  { bWalking = false; }
 
 void ARSCharacter::StartFire()
 {
+	// в оверлее читов ЛКМ переключает чит, а не стреляет
+	if (bCheatMenuOpen)
+	{
+		if (APlayerController* PC = Cast<APlayerController>(GetController()))
+		{
+			float MX = 0.f, MY = 0.f;
+			if (ARSHUD* RSHud = Cast<ARSHUD>(PC->GetHUD()))
+			{
+				if (PC->GetMousePosition(MX, MY))
+				{
+					RSHud->HandleCheatClick(FVector2D(MX, MY), this);
+				}
+			}
+		}
+		return;
+	}
+
 	// в закупке ЛКМ покупает то, на что наведён курсор, а не стреляет
 	if (bBuyMenuOpen)
 	{
@@ -1314,7 +1399,9 @@ void ARSCharacter::StartAim()
 		Camera->SetFieldOfView(Def.ScopeFOV);
 		if (Def.Mesh == ERSMeshKind::Sniper)
 		{
-			GunMesh->SetVisibility(false); // в оптике оружие не видно, как в CS
+			// в оптике оружие не видно, как в CS
+			GunMesh->SetVisibility(false);
+			FPGun->SetVisibility(false);
 		}
 	}
 }
@@ -1324,7 +1411,10 @@ void ARSCharacter::StopAim()
 	bAiming = false;
 	bAimingNow = false;
 	Camera->SetFieldOfView(90.f);
-	GunMesh->SetVisibility(!bThirdPerson);
+	// показываем ровно то, что было до прицеливания: иначе рядом со скелетной
+	// вьюмоделью всплывал ещё и статик-меш, и оружие двоилось
+	GunMesh->SetVisibility(!bThirdPerson && !bUsingSkeletalVM);
+	FPGun->SetVisibility(bUsingSkeletalVM && !bThirdPerson);
 }
 
 void ARSCharacter::Reload()
@@ -1340,10 +1430,8 @@ void ARSCharacter::Reload()
 	ReloadEndTime = GetWorld()->GetTimeSeconds() + Def.ReloadTime;
 	PlayArmsAnim(AnimReload, false, Def.ReloadTime);
 
-	if (USoundBase* Snd = RSAudio::Get(RSAudio::ESound::Reload))
-	{
-		UGameplayStatics::PlaySoundAtLocation(this, Snd, GetActorLocation(), 0.9f);
-	}
+	RSAudio::PlayAt(this, RSAudio::GetReloadSound(CurrentWeapon),
+		GetActorLocation(), 0.9f, RSAudio::ERange::Step);
 
 	// анимация перезарядки растягивается ровно на время перезарядки оружия
 	if (const FRSViewModel* VM = RSViewModel::Get(CurrentWeapon))
@@ -1971,10 +2059,10 @@ void ARSCharacter::MulticastTracer_Implementation(FVector Start, FVector End, bo
 	}
 
 	// у ножа свой замах, у стволов — звук по классу оружия
-	if (USoundBase* Shot = RSAudio::GetFireSound(CurrentWeapon))
-	{
-		UGameplayStatics::PlaySoundAtLocation(this, Shot, Start, bMelee ? 0.7f : 1.f);
-	}
+	RSAudio::PlayAt(this, RSAudio::GetFireSound(CurrentWeapon), Start,
+		bMelee ? 0.7f : 1.f,
+		bMelee ? RSAudio::ERange::Step : RSAudio::ERange::Gun,
+		!IsLocallyControlled());
 }
 
 void ARSCharacter::ClientHitMarker_Implementation()

@@ -54,4 +54,8 @@ private:
 	UStaticMesh* PistolAsset = nullptr;
 
 	float ArmedAt = 0.f; // не подбираем то, что сами только что бросили
+
+	// центр сферы подбора стоит выше пола на эту величину: меш опускаем
+	// на столько же, чтобы оружие лежало на поверхности
+	static constexpr float GroundOffset = 45.f;
 };

@@ -43,6 +43,14 @@ public:
 	UPROPERTY(Replicated)
 	int32 BotNumber = 0;
 
+	// Ник вместо «Бот 3»: собирается из списков при создании и живёт с ботом
+	// до конца матча.
+	UPROPERTY(Replicated)
+	FString Nick;
+
+	// сервер выдаёт имя новому боту
+	static FString MakeBotNick(int32 Seed);
+
 	// сервер помечает последний хит хедшотом для killfeed
 	bool bLastHitHeadshot = false;
 
@@ -84,6 +92,10 @@ private:
 	void ApplyTeamVisuals();
 	// подобрать модель под оружие раунда и посадить её в руку
 	void ApplyWeaponVisuals();
+
+	// шаги: без них слышно только себя, а противников и союзников нет
+	void UpdateFootsteps(float DeltaTime);
+	float StepDistance = 0.f;
 	FVector GunPivot = FVector::ZeroVector;
 	FVector GunHandLoc = FVector::ZeroVector;
 

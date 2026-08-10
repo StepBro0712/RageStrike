@@ -21,11 +21,13 @@ public:
 	void OnCombatantDied();
 
 	void SpawnBotAt(const FVector& Location, ERSTeam Team);
-	// боты всегда играют против команды хозяина игры
-	void OnPlayerTeamChanged();
 
-	int32 BotCount = 5;      // противников
-	int32 TeammateCount = 4; // напарников, чтобы раунд не решался в одиночку
+	// перечитать правила из настроек: вызывается на старте уровня и когда
+	// хост меняет их в меню, иначе матч продолжал играть по старым цифрам
+	void ApplyMatchSettings();
+	// Игрок сменил сторону — состав перекосило, добираем заново.
+	// Сторону читаем из мира: пешка проставляет Team до вызова.
+	void OnPlayerTeamChanged();
 
 	// правила матча берутся из настроек хоста, значения ниже — запасные
 	int32 RoundsTotal = 24;
@@ -35,6 +37,7 @@ public:
 	static constexpr float RoundSeconds = 120.f;
 	static constexpr float RoundEndSeconds = 5.f;  // показ итога раунда
 	static constexpr float BuySeconds = 15.f;      // закупка перед раундом
+	static constexpr float ExtraBuySeconds = 15.f; // докупка после начала раунда
 	static constexpr float MatchOverSeconds = 8.f; // показ итога матча
 
 private:
@@ -55,10 +58,21 @@ private:
 
 	void EndRound(ERSTeam Winner, const FString& Reason);
 	void SwapSides();
-	void EnsureBots();
+	// единственное место, где меняется состав: добирает ботов до размера
+	// команды и выгоняет лишних. Должна быть идемпотентной — её зовут
+	// и на старте, и при смене стороны, и перед каждым раундом
+	void RebalanceRoster();
 	int32 CountAlive(ERSTeam Team) const;
-	ERSTeam GetBotTeam() const;
 	ARSGameState* RSState() const;
+
+	// диагностика состава: поимённо кто в какой команде, вместе с теми,
+	// кому уже вызвали Destroy — уничтожение в Unreal отложенное,
+	// и такой «уходящий» бот мог бы попадать в подсчёт
+	FString RosterDump() const;
+	// Внутри смены сторон состав перевёрнут наполовину: игрокам команду уже
+	// поменяли, ботам ещё нет. Считать по такому миру нельзя — на этом
+	// и плодился лишний бот, поэтому на время свапа перебор состава заперт.
+	bool bInSwapSides = false;
 
 	FTimerHandle StartTimer;
 	FTimerHandle PhaseTimer;

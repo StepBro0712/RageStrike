@@ -35,9 +35,13 @@ public:
 
 	// клик мышью по меню закупки; true — попали в карточку
 	bool HandleBuyClick(const FVector2D& Mouse, ARSCharacter* Player);
+	// клик по строке оверлея читов; true — переключили чит
+	bool HandleCheatClick(const FVector2D& Mouse, ARSCharacter* Player);
 
 private:
 	TArray<FRSBuyHotspot> BuyHotspots;
+	// строки оверлея читов: индекс чита и его область на экране
+	TArray<TPair<int32, FBox2D>> CheatHotspots;
 	bool GetMouseOnCanvas(FVector2D& Out) const;
 
 	void DrawCrosshair(const ARSCharacter* Player);
@@ -49,9 +53,23 @@ private:
 	void DrawMoney(const ARSCharacter* Player);
 	void DrawRadar(const ARSCharacter* Player);
 	void DrawKillFeed(const ARSCharacter* Player);
+	// Весь текст HUD идёт через эту обёртку: она рисует крупным шрифтом,
+	// а масштаб делит на отношение размеров, чтобы вёрстка осталась прежней.
+	void DrawTextScaled(const FString& Text, FLinearColor Color, float X, float Y,
+		class UFont* Font, float Scale);
+	// замер текста тем же масштабом, иначе панели считают ширину неверно
+	void GetTextSizeScaled(const FString& Text, float& OutW, float& OutH,
+		class UFont* Font, float Scale);
+
 	void DrawPerfStats();
-	// сглаженный FPS: мгновенный дёргается и его невозможно читать
-	float SmoothedFPS = 0.f;
+	// показания пересчитываются раз в полсекунды: чаще их не прочитать
+	float PerfNextUpdate = 0.f;
+	int32 PerfFrames = 0;
+	float PerfAccumTime = 0.f;
+	float ShownFPS = 0.f;
+	float ShownFrameMs = 0.f;
+	float ShownCPUPct = 0.f;
+	float ShownGPUPct = 0.f;
 
 	void DrawBoxOutline(float X, float Y, float W, float H, const FLinearColor& Color, float Thickness);
 	void DrawRoundInfo(const ARSCharacter* Player);

@@ -44,6 +44,9 @@ public:
 
 	void SaveUserFloat(const TCHAR* Key, float Value);
 
+	// хост поменял правила в меню — применяем их к текущему матчу
+	void ApplyMatchSettingsNow();
+
 private:
 	// облётная камера меню и то, куда вернуть взгляд при закрытии
 	void ShowMenuCamera();
