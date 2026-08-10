@@ -43,6 +43,7 @@ public:
 	bool bSpeedhack = false;    // F5 (+ auto-bhop)
 	bool bSilentAim = false;    // F6
 	bool bGodMode = false;      // F7
+	bool bInfiniteMoney = false; // F8
 
 	// --- State (HUD reads these) ---
 	UPROPERTY(Replicated)
@@ -123,6 +124,7 @@ public:
 
 	AActor* SpectateTarget = nullptr;
 	bool bBuyMenuOpen = false;
+	bool bCheatMenuOpen = false;   // оверлей читов, Del или Insert
 	int32 BuyCategory = -1;      // -1 — выбор категории
 	bool bScoreboardOpen = false;
 
@@ -228,6 +230,7 @@ private:
 	void ApplyWeaponVisuals();
 	void ApplyViewMode();
 
+	void ToggleCheatMenu() { bCheatMenuOpen = !bCheatMenuOpen; }
 	void ToggleAimbot()   { bAimbot = !bAimbot; }
 	void ToggleESP()      { bESP = !bESP; }
 	void ToggleTrigger()  { bTriggerbot = !bTriggerbot; }
@@ -235,12 +238,14 @@ private:
 	void ToggleSpeed()    { bSpeedhack = !bSpeedhack; SyncCheats(); }
 	void ToggleSilent()   { bSilentAim = !bSilentAim; }
 	void ToggleGod()      { bGodMode = !bGodMode; SyncCheats(); }
+	void ToggleMoney()    { bInfiniteMoney = !bInfiniteMoney; SyncCheats(); }
 
-	// годмод и спидхак должен знать сервер (урон и скорость — серверные)
+	// годмод, спидхак и деньги должен знать сервер: урон, скорость и кошелёк
+	// считаются на нём
 	void SyncCheats();
 
 	UFUNCTION(Server, Reliable)
-	void ServerSyncCheats(bool bInGod, bool bInSpeed);
+	void ServerSyncCheats(bool bInGod, bool bInSpeed, bool bInMoney);
 
 	UFUNCTION(Server, Reliable)
 	void ServerFire(FVector Start, FVector_NetQuantizeNormal Dir, ERSWeapon Weapon);
@@ -311,6 +316,14 @@ private:
 	UPROPERTY()
 	UStaticMesh* GrenadeAsset = nullptr; // сфера-болванка
 
+	// Настоящие модели CS2 по стволам. Чего нет — берётся заглушка по ERSMeshKind.
+	UPROPERTY()
+	TMap<ERSWeapon, UStaticMesh*> WeaponMeshes;
+
+	void LoadWeaponMeshes();
+	// длина ствола в сантиметрах: по ней модель приводится к нужному размеру
+	static float GetWeaponRealLength(ERSWeapon W);
+
 	UPROPERTY()
 	USkeletalMesh* CTBodyMesh = nullptr;
 
@@ -342,6 +355,11 @@ private:
 
 	FVector GunBaseLoc = FVector::ZeroVector;
 	FRotator GunBaseRot = FRotator::ZeroRotator;
+
+	// оружие в руке тела: поворот пересчитывается каждый кадр под кость,
+	// поэтому смещение пивота компенсируется там же, в Tick
+	FVector TPGunBaseLoc = FVector::ZeroVector;
+	FVector TPGunPivot = FVector::ZeroVector;
 
 	bool bFireHeld = false;
 	bool bShotSincePress = false; // полуавтомат: один выстрел на нажатие

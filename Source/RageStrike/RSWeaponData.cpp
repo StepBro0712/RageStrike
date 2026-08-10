@@ -51,16 +51,19 @@ namespace RSWeapons
 				}
 			}
 		};
+		// Порядок совпадает с колонками меню закупки и с цифрами на клавиатуре:
+		// 1 снаряжение, 2 пистолеты, 3 средний класс, 4 винтовки, 5 снайперские, 6 гранаты
 		switch (Category)
 		{
-		case 0: Add({ ERSWeapon::Glock, ERSWeapon::USP, ERSWeapon::P250, ERSWeapon::Deagle,
+		case 0: break; // снаряжение (броня) — не оружие, рисуется отдельно
+		case 1: Add({ ERSWeapon::Glock, ERSWeapon::USP, ERSWeapon::P250, ERSWeapon::Deagle,
 		              ERSWeapon::Tec9, ERSWeapon::FiveSeven }); break;
-		case 1: Add({ ERSWeapon::MP9, ERSWeapon::MAC10, ERSWeapon::UMP45, ERSWeapon::P90,
+		case 2: Add({ ERSWeapon::MP9, ERSWeapon::MAC10, ERSWeapon::UMP45, ERSWeapon::P90,
 		              ERSWeapon::Nova, ERSWeapon::XM1014 }); break;
-		case 2: Add({ ERSWeapon::GalilAR, ERSWeapon::FAMAS, ERSWeapon::AK47, ERSWeapon::M4A4,
+		case 3: Add({ ERSWeapon::GalilAR, ERSWeapon::FAMAS, ERSWeapon::AK47, ERSWeapon::M4A4,
 		              ERSWeapon::AUG, ERSWeapon::SG553 }); break;
-		case 3: Add({ ERSWeapon::SSG08, ERSWeapon::AWP }); break;
-		case 4: Add({ ERSWeapon::HEGrenade, ERSWeapon::Flashbang, ERSWeapon::SmokeGrenade,
+		case 4: Add({ ERSWeapon::SSG08, ERSWeapon::AWP }); break;
+		case 5: Add({ ERSWeapon::HEGrenade, ERSWeapon::Flashbang, ERSWeapon::SmokeGrenade,
 		              ERSWeapon::Molotov, ERSWeapon::Incendiary }); break;
 		default: break;
 		}
@@ -71,12 +74,12 @@ namespace RSWeapons
 	{
 		switch (Category)
 		{
-		case 0: return TEXT("Пистолеты");
-		case 1: return TEXT("ПП и дробовики");
-		case 2: return TEXT("Винтовки");
-		case 3: return TEXT("Снайперки");
-		case 4: return TEXT("Гранаты");
-		default: return TEXT("Броня");
+		case 0: return TEXT("Снаряжение");
+		case 1: return TEXT("Пистолеты");
+		case 2: return TEXT("ПП и дробовики");
+		case 3: return TEXT("Винтовки");
+		case 4: return TEXT("Снайперские");
+		default: return TEXT("Гранаты");
 		}
 	}
 }

@@ -113,7 +113,6 @@ void ARSHUD::DrawHUD()
 	}
 
 	DrawRadar(Player);
-	DrawCheatPanel(Player);
 	DrawKillFeed(Player);
 	DrawHealthArmor(Player);
 	DrawAmmo(Player);
@@ -121,6 +120,8 @@ void ARSHUD::DrawHUD()
 	DrawRoundInfo(Player);
 	DrawBuyMenu(Player);
 	DrawScoreboard(Player);
+	// оверлей читов рисуем последним: он должен лежать поверх закупки
+	DrawCheatPanel(Player);
 
 	const float Now = GetWorld()->GetTimeSeconds();
 
@@ -148,6 +149,14 @@ void ARSHUD::DrawHUD()
 		const float Left = (Player->FlashEndTime - Now) / FMath::Max(0.3f, Player->FlashDuration);
 		const float Alpha = FMath::Clamp(Left * Left * 1.6f, 0.f, 1.f);
 		DrawRect(FLinearColor(1.f, 1.f, 1.f, Alpha), 0.f, 0.f, Canvas->SizeX, Canvas->SizeY);
+	}
+
+	// Строка управления: держим её в актуальном виде — клавиши тут те же,
+	// что привязаны в ARSCharacter::SetupPlayerInputComponent
+	if (!Player->bBuyMenuOpen && !Player->bScoreboardOpen)
+	{
+		DrawText(TEXT("1/2/3/4 — основное · пистолет · нож · гранаты   |   B — закупка   |   G — выбросить   |   R — перезарядка   |   ПКМ — прицел (с гранатой подкат)   |   Shift — тихо   |   Ctrl — присесть   |   F — осмотр   |   V — вид   |   Tab — счёт   |   Del — читы   |   Esc — меню"),
+			FLinearColor(1.f, 1.f, 1.f, 0.32f), 24.f, Canvas->SizeY - 22.f, GEngine->GetSmallFont(), 1.f);
 	}
 }
 
@@ -393,35 +402,107 @@ void ARSHUD::DrawKillFeed(const ARSCharacter* Player)
 	}
 }
 
+bool ARSHUD::GetMouseOnCanvas(FVector2D& Out) const
+{
+	APlayerController* PC = GetOwningPlayerController();
+	float MX = 0.f, MY = 0.f;
+	if (PC && PC->GetMousePosition(MX, MY))
+	{
+		Out = FVector2D(MX, MY);
+		return true;
+	}
+	return false;
+}
+
+bool ARSHUD::HandleBuyClick(const FVector2D& Mouse, ARSCharacter* Player)
+{
+	if (!Player || !Player->bBuyMenuOpen)
+	{
+		return false;
+	}
+
+	for (const FRSBuyHotspot& Spot : BuyHotspots)
+	{
+		if (!Spot.Contains(Mouse))
+		{
+			continue;
+		}
+		// клик по заголовку просто переключает категорию для цифровых клавиш
+		Player->BuyCategory = Spot.Category;
+		if (Spot.Kind == 0 || Spot.Kind == 1)
+		{
+			Player->ServerBuyArmor(Spot.Kind == 1);
+		}
+		else if (Spot.Kind == -1)
+		{
+			Player->ServerBuyWeapon(Spot.Weapon);
+		}
+		return true;
+	}
+	// клик мимо карточек внутри меню всё равно не должен стрелять
+	return true;
+}
+
 void ARSHUD::DrawCheatPanel(const ARSCharacter* Player)
 {
-	struct FCheatRow { const TCHAR* Name; bool bOn; };
+	// Оверлей открывается на Del или Insert. Пока он закрыт, на экране
+	// никаких следов читов — чистый HUD.
+	struct FCheatRow { const TCHAR* Key; const TCHAR* Name; const TCHAR* Desc; bool bOn; };
 	const FCheatRow Rows[] =
 	{
-		{ TEXT("[F1] Aimbot"),        Player->bAimbot },
-		{ TEXT("[F2] ESP / WH"),      Player->bESP },
-		{ TEXT("[F3] Triggerbot"),    Player->bTriggerbot },
-		{ TEXT("[F4] NoRecoil"),      Player->bNoRecoilSpread },
-		{ TEXT("[F5] Speed + BHop"),  Player->bSpeedhack },
-		{ TEXT("[F6] Silent Aim"),    Player->bSilentAim },
-		{ TEXT("[F7] GodMode"),       Player->bGodMode },
+		{ TEXT("F1"), TEXT("Aimbot"),      TEXT("наводит в голову"),        Player->bAimbot },
+		{ TEXT("F2"), TEXT("ESP / WH"),    TEXT("враги сквозь стены"),      Player->bESP },
+		{ TEXT("F3"), TEXT("Triggerbot"),  TEXT("стреляет сам по цели"),    Player->bTriggerbot },
+		{ TEXT("F4"), TEXT("NoRecoil"),    TEXT("без отдачи и разброса"),   Player->bNoRecoilSpread },
+		{ TEXT("F5"), TEXT("Speed + BHop"),TEXT("скорость и распрыжка"),    Player->bSpeedhack },
+		{ TEXT("F6"), TEXT("Silent Aim"),  TEXT("пули летят в цель"),       Player->bSilentAim },
+		{ TEXT("F7"), TEXT("GodMode"),     TEXT("бессмертие"),              Player->bGodMode },
+		{ TEXT("F8"), TEXT("Деньги"),      TEXT("кошелёк не пустеет"),      Player->bInfiniteMoney },
 	};
 
-	const float X = Canvas->SizeX - 240.f;
-	float Y = 45.f;
+	UFont* Small = GEngine->GetSmallFont();
 
-	DrawRect(ColBgDark, X - 14.f, Y - 32.f, 235.f, 32.f + 24.f * UE_ARRAY_COUNT(Rows) + 12.f);
-	DrawBoxOutline(X - 14.f, Y - 32.f, 235.f, 32.f + 24.f * UE_ARRAY_COUNT(Rows) + 12.f, ColRed, 1.5f);
-	DrawText(TEXT("RAGE MENU"), ColRed, X, Y - 26.f, GEngine->GetMediumFont(), 1.2f);
+	// когда оверлей закрыт, на экране не остаётся ничего: состояние читов
+	// смотрим по Del/Insert
+	if (!Player->bCheatMenuOpen)
+	{
+		return;
+	}
 
+	const float W = 460.f;
+	const float RowH = 34.f;
+	const float H = 78.f + RowH * UE_ARRAY_COUNT(Rows) + 34.f;
+	const float X = Canvas->SizeX * 0.5f - W * 0.5f;
+	const float Y0 = Canvas->SizeY * 0.5f - H * 0.5f;
+
+	// затемняем игру, чтобы оверлей читался поверх любой карты
+	DrawRect(FLinearColor(0.f, 0.f, 0.f, 0.45f), 0.f, 0.f, Canvas->SizeX, Canvas->SizeY);
+
+	DrawRect(ColBgSolid, X, Y0, W, H);
+	DrawBoxOutline(X, Y0, W, H, ColRed, 2.f);
+	DrawRect(ColRed, X, Y0, W, 3.f);
+
+	DrawText(TEXT("RAGE MENU"), ColRed, X + 20.f, Y0 + 16.f, GEngine->GetMediumFont(), 1.5f);
+	DrawText(TEXT("Del / Insert — закрыть"), ColDim, X + W - 190.f, Y0 + 24.f, Small, 1.1f);
+
+	float Y = Y0 + 62.f;
 	for (const FCheatRow& Row : Rows)
 	{
-		DrawText(Row.Name, ColWhite, X, Y, GEngine->GetSmallFont(), 1.2f);
-		DrawText(Row.bOn ? TEXT("ON") : TEXT("OFF"),
+		DrawRect(Row.bOn ? FLinearColor(0.10f, 0.30f, 0.14f, 0.55f)
+		                 : FLinearColor(1.f, 1.f, 1.f, 0.04f),
+			X + 14.f, Y, W - 28.f, RowH - 6.f);
+
+		DrawText(Row.Key, ColGold, X + 24.f, Y + 6.f, Small, 1.2f);
+		DrawText(Row.Name, ColWhite, X + 62.f, Y + 6.f, Small, 1.25f);
+		DrawText(Row.Desc, ColDim, X + 190.f, Y + 7.f, Small, 1.05f);
+		DrawText(Row.bOn ? TEXT("ВКЛ") : TEXT("ВЫКЛ"),
 			Row.bOn ? ColCSGreen : FLinearColor(0.5f, 0.5f, 0.5f),
-			X + 165.f, Y, GEngine->GetSmallFont(), 1.2f);
-		Y += 24.f;
+			X + W - 66.f, Y + 6.f, Small, 1.2f);
+		Y += RowH;
 	}
+
+	DrawText(TEXT("Клавиши F1–F8 работают и с закрытым меню"), ColDim,
+		X + 20.f, Y0 + H - 26.f, Small, 1.05f);
 }
 
 // ВЫРАЗИТЕЛЬНЫЙ НИЖНИЙ CS2 HUD (Скриншот 1 из примера)
@@ -477,14 +558,7 @@ void ARSHUD::DrawHealthArmor(const ARSCharacter* Player)
 		DrawText(APStr, ColCT, HPX + HW + 6.f, HPY + 16.f, Small, 1.3f);
 	}
 
-	// 3. ЦЕНТРАЛЬНЫЙ БЕЙДЖ CS2 (CS2)
-	const float EmblemX = CX - 22.f;
-	const float EmblemY = H - 65.f;
-	DrawRect(ColBgDark, EmblemX, EmblemY, 44.f, 44.f);
-	DrawBoxOutline(EmblemX, EmblemY, 44.f, 44.f, ColGold, 2.0f);
-	DrawText(TEXT("CS2"), ColGold, EmblemX + 8.f, EmblemY + 12.f, Small, 1.25f);
-
-	// 4. ПАТРОНЫ И ОРУЖИЕ (Центр-Справа 12 / 24 с фоновой плашкой)
+	// 3. ПАТРОНЫ И ОРУЖИЕ (Центр-Справа 12 / 24 с фоновой плашкой)
 	const float AmmoX = CX + 90.f;
 	const float AmmoY = H - 75.f;
 
@@ -598,7 +672,8 @@ void ARSHUD::DrawRoundInfo(const ARSCharacter* Player)
 	const FString ScoreStr = FString::Printf(TEXT("%d   %d"), State->ScoreCT, State->ScoreT);
 	DrawText(ScoreStr, ColWhite, CenterX + 40.f, Y + 28.f, Font, 1.3f);
 
-	DrawText(TEXT("5 vs 5"), ColDim, CenterX + 41.f, Y + 44.f, Font, 0.95f);
+	// живые по сторонам, а не подпись «5 vs 5» на все случаи жизни
+	DrawText(FString::Printf(TEXT("%d — %d"), AliveCT, AliveT), ColDim, CenterX + 41.f, Y + 44.f, Font, 0.95f);
 
 	// 5 Крупных карточек террористов (T) справа
 	float TX = CX + 65.f;
@@ -728,9 +803,10 @@ void ARSHUD::DrawBuyMenu(const ARSCharacter* Player)
 
 	const bool bBuyTime = State->Phase == ERSPhase::Intermission;
 
+	const int32 NumCols = RSWeapons::BuyCategories;
 	const float ColW = 160.f;
 	const float ColGap = 12.f;
-	const float TotalW = 5 * ColW + 4 * ColGap;
+	const float TotalW = NumCols * ColW + (NumCols - 1) * ColGap;
 	const float StartX = Canvas->SizeX * 0.5f - TotalW * 0.5f;
 	const float StartY = Canvas->SizeY * 0.16f;
 
@@ -738,43 +814,78 @@ void ARSHUD::DrawBuyMenu(const ARSCharacter* Player)
 	DrawBoxOutline(StartX - 24.f, StartY - 45.f, TotalW + 48.f, 500.f, ColBorder, 1.5f);
 
 	const int32 Left = FMath::CeilToInt(State->GetTimeLeft());
-	DrawText(FString::Printf(TEXT("Buy Time Remaining  %02d:%02d"), Left / 60, Left % 60), ColDim, StartX, StartY - 35.f, Font, 1.3f);
+	DrawText(FString::Printf(TEXT("До конца закупки  %02d:%02d"), Left / 60, Left % 60), ColDim, StartX, StartY - 35.f, Font, 1.3f);
 	DrawText(FString::Printf(TEXT("$ %d"), Player->Money), ColCSGreen, StartX + TotalW - 100.f, StartY - 35.f, Med, 1.5f);
 
-	const TCHAR* Categories[] = { TEXT("1  Equipment"), TEXT("2  Pistols"), TEXT("3  Mid-Tier"), TEXT("4  Rifles"), TEXT("5  Grenades") };
+	// с клавиатуры покупка в два шага (категория, потом предмет),
+	// мышью — сразу по карточке; зоны для кликов собираем здесь же
+	const int32 Chosen = Player->BuyCategory;
+	BuyHotspots.Reset();
 
-	for (int32 c = 0; c < 5; c++)
+	FVector2D Mouse;
+	const bool bHasMouse = GetMouseOnCanvas(Mouse);
+
+	for (int32 c = 0; c < NumCols; c++)
 	{
 		const float CX = StartX + c * (ColW + ColGap);
 		float CY = StartY;
 
-		DrawRect(FLinearColor(0.04f, 0.05f, 0.07f, 0.92f), CX, CY, ColW, 30.f);
-		DrawText(Categories[c], ColWhite, CX + 8.f, CY + 5.f, Font, 1.2f);
+		const bool bActive = (Chosen == c);
+
+		FRSBuyHotspot Header;
+		Header.Min = FVector2D(CX, CY);
+		Header.Max = FVector2D(CX + ColW, CY + 30.f);
+		Header.Category = c;
+		Header.Kind = -2;
+		BuyHotspots.Add(Header);
+
+		const bool bHoverHeader = bHasMouse && Header.Contains(Mouse);
+		DrawRect((bActive || bHoverHeader) ? FLinearColor(0.20f, 0.16f, 0.03f, 0.95f)
+			: FLinearColor(0.04f, 0.05f, 0.07f, 0.92f), CX, CY, ColW, 30.f);
+		if (bActive || bHoverHeader)
+		{
+			DrawBoxOutline(CX, CY, ColW, 30.f, ColGold, 1.5f);
+		}
+		DrawText(FString::Printf(TEXT("%d  %s"), c + 1, RSWeapons::BuyCategoryName(c)),
+			ColWhite, CX + 8.f, CY + 5.f, Font, 1.2f);
 		CY += 38.f;
 
 		TArray<ERSWeapon> Items;
-		if (c == 0)
+		if (c == RSWeapons::EquipmentCategory)
 		{
 			const bool bArmorFull = Player->Armor >= 100.f;
 			struct FEItem { const TCHAR* Name; int32 Price; bool bOwned; };
 			const FEItem EItems[] = {
-				{ TEXT("Kevlar Vest"), ARSCharacter::PriceKevlar, bArmorFull },
-				{ TEXT("Kevlar + Helmet"), ARSCharacter::PriceKevlarHelmet, bArmorFull && Player->bHasHelmet }
+				{ TEXT("Кевлар"), ARSCharacter::PriceKevlar, bArmorFull },
+				{ TEXT("Кевлар + шлем"), ARSCharacter::PriceKevlarHelmet, bArmorFull && Player->bHasHelmet }
 			};
 			for (int32 i = 0; i < 2; i++)
 			{
 				const bool bCan = bBuyTime && !EItems[i].bOwned && Player->Money >= EItems[i].Price;
-				const FLinearColor CardBg = EItems[i].bOwned ? FLinearColor(0.1f, 0.35f, 0.15f, 0.65f) : FLinearColor(0.06f, 0.08f, 0.10f, 0.80f);
+
+				FRSBuyHotspot Spot;
+				Spot.Min = FVector2D(CX, CY);
+				Spot.Max = FVector2D(CX + ColW, CY + 62.f);
+				Spot.Category = c;
+				Spot.Kind = (int8)i; // 0 кевлар, 1 кевлар со шлемом
+				BuyHotspots.Add(Spot);
+
+				const bool bHover = bHasMouse && Spot.Contains(Mouse);
+				FLinearColor CardBg = EItems[i].bOwned ? FLinearColor(0.1f, 0.35f, 0.15f, 0.65f) : FLinearColor(0.06f, 0.08f, 0.10f, 0.80f);
+				if (bHover && bCan)
+				{
+					CardBg = FLinearColor(0.12f, 0.22f, 0.14f, 0.95f);
+				}
 
 				DrawRect(CardBg, CX, CY, ColW, 62.f);
-				DrawBoxOutline(CX, CY, ColW, 62.f, bCan ? ColCSGreen : ColBorder, 1.f);
+				DrawBoxOutline(CX, CY, ColW, 62.f, bCan ? ColCSGreen : ColBorder, bHover ? 2.f : 1.f);
 
 				DrawText(FString::Printf(TEXT("%d"), i + 1), ColDim, CX + 6.f, CY + 4.f, Font, 1.0f);
 				DrawText(EItems[i].Name, bCan ? ColWhite : ColDim, CX + 20.f, CY + 4.f, Font, 1.1f);
 
 				if (EItems[i].bOwned)
 				{
-					DrawText(TEXT("OWNED"), ColCSGreen, CX + 8.f, CY + 38.f, Font, 1.05f);
+					DrawText(TEXT("КУПЛЕНО"), ColCSGreen, CX + 8.f, CY + 38.f, Font, 1.05f);
 				}
 				else
 				{
@@ -786,10 +897,10 @@ void ARSHUD::DrawBuyMenu(const ARSCharacter* Player)
 		}
 		else
 		{
-			Items = RSWeapons::BuyCategory(c - 1, Player->Team);
+			Items = RSWeapons::BuyCategory(c, Player->Team);
 		}
 
-		for (int32 i = 0; i < Items.Num() && i < 5; i++)
+		for (int32 i = 0; i < Items.Num() && i < 6; i++)
 		{
 			const FRSWeaponDef& Def = RSWeapons::Get(Items[i]);
 			const bool bOwned =
@@ -799,9 +910,22 @@ void ARSHUD::DrawBuyMenu(const ARSCharacter* Player)
 			const bool bSlotBusy = Def.Slot == ERSSlot::Primary && Player->bHasPrimary;
 			const bool bCan = bBuyTime && !bOwned && !bSlotBusy && Player->Money >= Def.Price;
 
-			const FLinearColor CardBg = bOwned ? FLinearColor(0.1f, 0.35f, 0.15f, 0.65f) : FLinearColor(0.06f, 0.08f, 0.10f, 0.80f);
+			FRSBuyHotspot Spot;
+			Spot.Min = FVector2D(CX, CY);
+			Spot.Max = FVector2D(CX + ColW, CY + 62.f);
+			Spot.Category = c;
+			Spot.Weapon = Items[i];
+			Spot.Kind = -1;
+			BuyHotspots.Add(Spot);
+
+			const bool bHover = bHasMouse && Spot.Contains(Mouse);
+			FLinearColor CardBg = bOwned ? FLinearColor(0.1f, 0.35f, 0.15f, 0.65f) : FLinearColor(0.06f, 0.08f, 0.10f, 0.80f);
+			if (bHover && bCan)
+			{
+				CardBg = FLinearColor(0.12f, 0.22f, 0.14f, 0.95f);
+			}
 			DrawRect(CardBg, CX, CY, ColW, 62.f);
-			DrawBoxOutline(CX, CY, ColW, 62.f, bCan ? ColCSGreen : ColBorder, 1.f);
+			DrawBoxOutline(CX, CY, ColW, 62.f, bCan ? ColCSGreen : ColBorder, bHover ? 2.f : 1.f);
 
 			DrawText(FString::Printf(TEXT("%d"), i + 1), ColDim, CX + 6.f, CY + 4.f, Font, 1.0f);
 			DrawText(Def.Name, bCan ? ColWhite : ColDim, CX + 20.f, CY + 4.f, Font, 1.1f);
@@ -810,7 +934,7 @@ void ARSHUD::DrawBuyMenu(const ARSCharacter* Player)
 
 			if (bOwned)
 			{
-				DrawText(TEXT("OWNED"), ColCSGreen, CX + 8.f, CY + 40.f, Font, 1.0f);
+				DrawText(TEXT("КУПЛЕНО"), ColCSGreen, CX + 8.f, CY + 40.f, Font, 1.0f);
 			}
 			else
 			{
@@ -820,5 +944,16 @@ void ARSHUD::DrawBuyMenu(const ARSCharacter* Player)
 		}
 	}
 
-	DrawText(TEXT("[B] Close Buy Menu"), ColDim, StartX, StartY + 440.f, Font, 1.15f);
+	// подсказка меняется по шагу покупки, чтобы цифры не путались
+	const FString Hint = (Chosen < 0)
+		? FString(TEXT("ЛКМ — купить      цифра 1-6 — категория      [B] закрыть"))
+		: FString::Printf(TEXT("ЛКМ — купить      «%s»: цифра — купить      [0] назад      [B] закрыть"),
+			RSWeapons::BuyCategoryName(Chosen));
+	DrawText(Hint, ColDim, StartX, StartY + 440.f, Font, 1.15f);
+
+	if (!bBuyTime)
+	{
+		DrawText(TEXT("Покупать можно только между раундами"), ColRed,
+			StartX, StartY + 418.f, Font, 1.15f);
+	}
 }

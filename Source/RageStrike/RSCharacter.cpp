@@ -7,6 +7,7 @@
 #include "RSPlayerController.h"
 #include "RSGrenade.h"
 #include "RSFireZone.h"
+#include "RSHUD.h"
 #include "Camera/CameraComponent.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Components/CapsuleComponent.h"
@@ -100,6 +101,8 @@ ARSCharacter::ARSCharacter()
 	{
 		GrenadeAsset = Ball.Object;
 	}
+
+	LoadWeaponMeshes();
 
 	// руки от первого лица: пока скрыты, идёт подбор посадки по замерам
 	ArmsMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("ArmsMesh"));
@@ -201,6 +204,55 @@ ARSCharacter::ARSCharacter()
 	SetMinNetUpdateFrequency(30.f);
 	SetReplicateMovement(true);
 	Move->NetworkSmoothingMode = ENetworkSmoothingMode::Exponential;
+}
+
+void ARSCharacter::LoadWeaponMeshes()
+{
+	// Скачанные модели CS2. Ассеты переименованы скриптом импорта в SM_<Имя>,
+	// поэтому пути предсказуемы; чего нет — останется заглушка по ERSMeshKind.
+	struct FEntry { ERSWeapon Weapon; const TCHAR* Path; };
+	static const FEntry Entries[] =
+	{
+		{ ERSWeapon::AK47,    TEXT("/Game/Weapons/CS2/AK47/Meshes/SM_AK47.SM_AK47") },
+		{ ERSWeapon::USP,     TEXT("/Game/Weapons/CS2/USPS/Meshes/SM_USPS.SM_USPS") },
+		{ ERSWeapon::Deagle,  TEXT("/Game/Weapons/CS2/Deagle/Meshes/SM_Deagle.SM_Deagle") },
+		{ ERSWeapon::M4A4,    TEXT("/Game/Weapons/CS2/M4A4/Meshes/SM_M4A4.SM_M4A4") },
+		{ ERSWeapon::AUG,     TEXT("/Game/Weapons/CS2/AUG/Meshes/SM_AUG.SM_AUG") },
+		{ ERSWeapon::FAMAS,   TEXT("/Game/Weapons/CS2/Famas/Meshes/SM_Famas.SM_Famas") },
+		{ ERSWeapon::GalilAR, TEXT("/Game/Weapons/CS2/Galil/Meshes/SM_Galil.SM_Galil") },
+		{ ERSWeapon::MP9,     TEXT("/Game/Weapons/CS2/MP9/Meshes/SM_MP9.SM_MP9") },
+		{ ERSWeapon::AWP,     TEXT("/Game/Weapons/CS2/AWP/Meshes/SM_AWP.SM_AWP") },
+		// без своих моделей: близкие по классу берут чужую
+		{ ERSWeapon::SG553,   TEXT("/Game/Weapons/CS2/AUG/Meshes/SM_AUG.SM_AUG") },
+		{ ERSWeapon::UMP45,   TEXT("/Game/Weapons/CS2/MP7/Meshes/SM_MP7.SM_MP7") },
+		{ ERSWeapon::MAC10,   TEXT("/Game/Weapons/CS2/MP7/Meshes/SM_MP7.SM_MP7") },
+		{ ERSWeapon::P90,     TEXT("/Game/Weapons/CS2/Bizon/Meshes/SM_Bizon.SM_Bizon") },
+		{ ERSWeapon::SSG08,   TEXT("/Game/Weapons/CS2/AWP/Meshes/SM_AWP.SM_AWP") },
+		{ ERSWeapon::Nova,    TEXT("/Game/Weapons/CS2/M249/Meshes/SM_M249.SM_M249") },
+		{ ERSWeapon::XM1014,  TEXT("/Game/Weapons/CS2/Negev/Meshes/SM_Negev.SM_Negev") },
+	};
+
+	for (const FEntry& E : Entries)
+	{
+		// ConstructorHelpers в цикле нельзя — грузим напрямую
+		if (UStaticMesh* Loaded = LoadObject<UStaticMesh>(nullptr, E.Path))
+		{
+			WeaponMeshes.Add(E.Weapon, Loaded);
+		}
+	}
+}
+
+float ARSCharacter::GetWeaponRealLength(ERSWeapon W)
+{
+	// реальные габариты в сантиметрах — по ним нормализуем чужие модели
+	switch (RSWeapons::Get(W).Slot)
+	{
+	case ERSSlot::Secondary: return 22.f;
+	case ERSSlot::Knife:     return 30.f;
+	case ERSSlot::Grenade:   return 12.f;
+	default:
+		return (RSWeapons::Get(W).Mesh == ERSMeshKind::Sniper) ? 120.f : 90.f;
+	}
 }
 
 void ARSCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -512,6 +564,8 @@ void ARSCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 	PlayerInputComponent->BindAction("ToggleSpeed", IE_Pressed, this, &ARSCharacter::ToggleSpeed);
 	PlayerInputComponent->BindAction("ToggleSilent", IE_Pressed, this, &ARSCharacter::ToggleSilent);
 	PlayerInputComponent->BindAction("ToggleGod", IE_Pressed, this, &ARSCharacter::ToggleGod);
+	// деньги: прямая привязка, в конфиге маппинга под F8 нет
+	PlayerInputComponent->BindKey(EKeys::F8, IE_Pressed, this, &ARSCharacter::ToggleMoney);
 
 	// B освободили под закупку, управление ботами ушло на F9-F12
 	PlayerInputComponent->BindKey(EKeys::F9, IE_Pressed, this, &ARSCharacter::AddBot);
@@ -531,6 +585,9 @@ void ARSCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 	PlayerInputComponent->BindKey(EKeys::Six, IE_Pressed, this, &ARSCharacter::Num6);
 	PlayerInputComponent->BindKey(EKeys::Zero, IE_Pressed, this, &ARSCharacter::Num0);
 	PlayerInputComponent->BindKey(EKeys::F, IE_Pressed, this, &ARSCharacter::StartInspect);
+	// оверлей читов открывается с двух привычных клавиш
+	PlayerInputComponent->BindKey(EKeys::Delete, IE_Pressed, this, &ARSCharacter::ToggleCheatMenu);
+	PlayerInputComponent->BindKey(EKeys::Insert, IE_Pressed, this, &ARSCharacter::ToggleCheatMenu);
 	PlayerInputComponent->BindKey(EKeys::V, IE_Pressed, this, &ARSCharacter::ToggleView);
 	PlayerInputComponent->BindKey(EKeys::RightMouseButton, IE_Pressed, this, &ARSCharacter::StartAim);
 	PlayerInputComponent->BindKey(EKeys::RightMouseButton, IE_Released, this, &ARSCharacter::StopAim);
@@ -586,6 +643,30 @@ void ARSCharacter::ToggleBuyMenu()
 	// открывается всегда: подсказка внутри объяснит, почему покупка недоступна
 	bBuyMenuOpen = !bBuyMenuOpen;
 	BuyCategory = -1;
+
+	// в закупке нужен курсор: карточки кликаются мышью
+	if (APlayerController* PC = Cast<APlayerController>(GetController()))
+	{
+		if (PC->IsLocalController())
+		{
+			PC->bShowMouseCursor = bBuyMenuOpen;
+			if (bBuyMenuOpen)
+			{
+				FInputModeGameAndUI Mode;
+				Mode.SetLockMouseToViewportBehavior(EMouseLockMode::LockOnCapture);
+				Mode.SetHideCursorDuringCapture(false);
+				PC->SetInputMode(Mode);
+				// ставим курсор в центр, иначе он остаётся там, где был в меню
+				int32 SizeX = 0, SizeY = 0;
+				PC->GetViewportSize(SizeX, SizeY);
+				PC->SetMouseLocation(SizeX / 2, SizeY / 2);
+			}
+			else
+			{
+				PC->SetInputMode(FInputModeGameOnly());
+			}
+		}
+	}
 }
 
 void ARSCharacter::HandleNumberKey(int32 N)
@@ -599,13 +680,13 @@ void ARSCharacter::HandleNumberKey(int32 N)
 		}
 		if (BuyCategory < 0)
 		{
-			if (N >= 1 && N <= 6)
+			if (N >= 1 && N <= RSWeapons::BuyCategories)
 			{
-				BuyCategory = N - 1; // 6-я категория — броня
+				BuyCategory = N - 1; // цифра совпадает с номером колонки на экране
 			}
 			return;
 		}
-		if (BuyCategory == 5) // броня
+		if (BuyCategory == RSWeapons::EquipmentCategory)
 		{
 			if (N == 1) { ServerBuyArmor(false); }
 			if (N == 2) { ServerBuyArmor(true); }
@@ -717,6 +798,8 @@ void ARSCharacter::ApplyWeaponVisuals()
 	}
 
 	UStaticMesh* WeaponMesh = AKAsset;
+	FVector MeshPivot = FVector::ZeroVector; // смещение центра модели от пивота
+	float FitFP = 0.f;                       // масштаб вьюмодели, 0 — как у мира
 	FVector HandLoc(-6.f, 2.f, -2.f);   // в руке тела (вид от третьего лица)
 	FRotator HandRot(0.f, 0.f, 90.f);
 	FVector CamLoc(35.f, 18.f, -20.f);  // у камеры (вид от первого лица без рук)
@@ -766,10 +849,58 @@ void ARSCharacter::ApplyWeaponVisuals()
 		break;
 	}
 
+	// Настоящая модель CS2 вместо заглушки. Модели скачаны у разных авторов,
+	// поэтому размер и разворот считаем по габаритам меша, а не подбираем руками:
+	// длинная ось направляется вперёд, а длина приводится к реальной.
+	if (UStaticMesh** Found = WeaponMeshes.Find(CurrentWeapon))
+	{
+		if (UStaticMesh* Real = *Found)
+		{
+			WeaponMesh = Real;
+
+			const FVector Extent = Real->GetBounds().BoxExtent;
+			const float Longest = FMath::Max3(Extent.X, Extent.Y, Extent.Z) * 2.f;
+			const float Fit = (Longest > 1.f)
+				? GetWeaponRealLength(CurrentWeapon) / Longest : 1.f;
+			Scale = FVector(Fit);
+			// вьюмодель в CS заметно мельче мирового размера, иначе ствол
+			// занимает пол-экрана
+			FitFP = Fit * 0.55f;
+
+			// доворот: ствол должен смотреть по оси Y меша (как у заглушек).
+			// Крен -90 переводит +Z в +Y; при +90 ствол уезжает в -Y, то есть
+			// назад, и оружие выглядит развёрнутым на 180 градусов.
+			FRotator Align = FRotator::ZeroRotator;
+			if (Extent.Z >= Extent.X && Extent.Z >= Extent.Y)
+			{
+				Align = FRotator(0.f, 0.f, -90.f); // модель вытянута вверх
+			}
+			else if (Extent.X > Extent.Y)
+			{
+				Align = FRotator(0.f, 90.f, 0.f); // вытянута вдоль X
+			}
+			CamRot = (FQuat(CamRot) * FQuat(Align)).Rotator();
+			HandRot = (FQuat(HandRot) * FQuat(Align)).Rotator();
+
+			// центр модели редко совпадает с началом координат — компенсируем,
+			// иначе ствол висит в стороне от руки
+			MeshPivot = Real->GetBounds().Origin * Fit;
+			CamLoc -= FQuat(CamRot).RotateVector(Real->GetBounds().Origin * FitFP);
+
+			// после центровки половина ствола уходит за камеру — выдвигаем вперёд
+			// и опускаем вправо-вниз, как держат оружие в CS
+			CamLoc.X += GetWeaponRealLength(CurrentWeapon) * 0.55f * 0.35f;
+			CamLoc.Y += 4.f;
+			CamLoc.Z -= 4.f;
+		}
+	}
+
 	TPGunMesh->SetStaticMesh(WeaponMesh);
 	TPGunMesh->SetRelativeLocation(HandLoc);
 	TPGunMesh->SetRelativeRotation(HandRot);
 	TPGunMesh->SetRelativeScale3D(Scale);
+	TPGunBaseLoc = HandLoc;
+	TPGunPivot = MeshPivot;
 
 	// Руки от первого лица отключены: их посадку нельзя подобрать расчётом,
 	// нужна ручная подгонка в редакторе. Оружие держим у камеры.
@@ -789,7 +920,7 @@ void ARSCharacter::ApplyWeaponVisuals()
 		GunMesh->SetRelativeLocation(CamLoc);
 		GunMesh->SetRelativeRotation(CamRot);
 	}
-	GunMesh->SetRelativeScale3D(Scale);
+	GunMesh->SetRelativeScale3D(FitFP > 0.f ? FVector(FitFP) : Scale);
 
 	// база для процедурной анимации вьюмодели + анимация доставания
 	GunBaseLoc = CamLoc;
@@ -833,14 +964,15 @@ void ARSCharacter::SyncCheats()
 {
 	if (!HasAuthority())
 	{
-		ServerSyncCheats(bGodMode, bSpeedhack);
+		ServerSyncCheats(bGodMode, bSpeedhack, bInfiniteMoney);
 	}
 }
 
-void ARSCharacter::ServerSyncCheats_Implementation(bool bInGod, bool bInSpeed)
+void ARSCharacter::ServerSyncCheats_Implementation(bool bInGod, bool bInSpeed, bool bInMoney)
 {
 	bGodMode = bInGod;
 	bSpeedhack = bInSpeed;
+	bInfiniteMoney = bInMoney;
 }
 
 bool ARSCharacter::IsFrozen() const
@@ -925,6 +1057,23 @@ void ARSCharacter::StopWalk()  { bWalking = false; }
 
 void ARSCharacter::StartFire()
 {
+	// в закупке ЛКМ покупает то, на что наведён курсор, а не стреляет
+	if (bBuyMenuOpen)
+	{
+		if (APlayerController* PC = Cast<APlayerController>(GetController()))
+		{
+			float MX = 0.f, MY = 0.f;
+			if (ARSHUD* RSHud = Cast<ARSHUD>(PC->GetHUD()))
+			{
+				if (PC->GetMousePosition(MX, MY))
+				{
+					RSHud->HandleBuyClick(FVector2D(MX, MY), this);
+				}
+			}
+		}
+		return;
+	}
+
 	// погибший «стреляет» переключением наблюдения
 	if (!bAlive)
 	{
@@ -1088,7 +1237,21 @@ void ARSCharacter::Tick(float DeltaTime)
 			: FRotator(-5.f, -90.f, 0.f);  // стволы вытянуты по оси Y
 		const FQuat DesiredWorld = (GetActorRotation() + Offset).Quaternion();
 		const FQuat BoneQuat = GetMesh()->GetSocketQuaternion(TEXT("hand_r"));
-		TPGunMesh->SetRelativeRotation(BoneQuat.Inverse() * DesiredWorld);
+		const FQuat RelQuat = BoneQuat.Inverse() * DesiredWorld;
+		TPGunMesh->SetRelativeRotation(RelQuat);
+		// у скачанных моделей центр далеко от пивота — сдвигаем по факту поворота,
+		// иначе ствол уезжает от руки
+		if (!TPGunPivot.IsNearlyZero())
+		{
+			TPGunMesh->SetRelativeLocation(TPGunBaseLoc - RelQuat.RotateVector(TPGunPivot));
+		}
+	}
+
+	// кошелёк не пустеет: покупки списывают деньги как обычно, а сервер
+	// тут же возвращает счёт к максимуму
+	if (HasAuthority() && bInfiniteMoney)
+	{
+		Money = 16000;
 	}
 
 	// упал за пределы карты — возвращаем, а не убиваем
@@ -1759,7 +1922,10 @@ void ARSCharacter::FreezeUntilRound()
 void ARSCharacter::RespawnForRound(const FVector& Location)
 {
 	StopSpectating();
-	bBuyMenuOpen = false;
+	if (bBuyMenuOpen)
+	{
+		ToggleBuyMenu(); // заодно уберёт курсор и вернёт игровой ввод
+	}
 	BuyCategory = -1;
 	bAlive = true;
 	Health = 100.f;

@@ -1,0 +1,16 @@
+AK47: меш не импортировался
+USPS: меш не импортировался
+Deagle   /Game/Weapons/CS2/Deagle/Meshes/SM_Deagle.SM_Deagle extent=(    2.2,   14.7,    8.5) origin=(  -0.0,   8.3,   3.4) длинная ось=Y mat=True
+M4A4     /Game/Weapons/CS2/M4A4/Meshes/SM_M4A4.SM_M4A4 extent=(    4.6,   44.8,   14.6) origin=(   0.2,  48.3,  24.8) длинная ось=Y mat=True
+M4A1S    /Game/Weapons/CS2/M4A1S/Meshes/SM_M4A1S.SM_M4A1S extent=(    3.9,   58.8,   15.0) origin=(  -0.4,  24.8,   5.5) длинная ось=Y mat=True
+AUG      /Game/Weapons/CS2/AUG/Meshes/SM_AUG.SM_AUG   extent=(    4.7,   38.5,   17.2) origin=(   0.9,   5.7,   1.8) длинная ось=Y mat=True
+Famas    /Game/Weapons/CS2/Famas/Meshes/SM_Famas.SM_Famas extent=(    4.1,   43.8,   16.4) origin=(   0.0,  17.1,   2.2) длинная ось=Y mat=True
+Galil    /Game/Weapons/CS2/Galil/Meshes/SM_Galil.SM_Galil extent=(    3.6,   39.1,   13.7) origin=(   0.7,  23.2,   0.8) длинная ось=Y mat=True
+MP7      /Game/Weapons/CS2/MP7/Meshes/SM_MP7.SM_MP7   extent=(    2.9,   20.2,   14.5) origin=(   0.0,   1.1,  -2.6) длинная ось=Y mat=True
+M249     /Game/Weapons/CS2/M249/Meshes/SM_M249.SM_M249 extent=(   10.9,   60.7,   14.7) origin=(   0.6,  19.4,   4.5) длинная ось=Y mat=True
+Negev    /Game/Weapons/CS2/Negev/Meshes/SM_Negev.SM_Negev extent=(   11.2,   50.4,   15.1) origin=(   0.3,  10.8,   4.1) длинная ось=Y mat=True
+MP9      /Game/Weapons/CS2/MP9/Meshes/SM_MP9.SM_MP9   extent=(    1.0,    5.3,   11.1) origin=(   0.0,  -1.7,   1.8) длинная ось=Z mat=True
+AWP      /Game/Weapons/CS2/AWP/Meshes/SM_AWP.SM_AWP   extent=(    2.3,    5.1,   26.9) origin=(  -5.2,   7.7, -20.7) длинная ось=Z mat=True
+Bizon    /Game/Weapons/CS2/Bizon/Meshes/SM_Bizon.SM_Bizon extent=(    1.4,    4.1,   14.9) origin=(  37.4,  -0.3,  40.6) длинная ось=Z mat=True
+C4: меш не импортировался
+Armor: меш не импортировался

@@ -87,8 +87,11 @@ namespace RSWeapons
 			|| (L == ERSTeamLock::T && Team == ERSTeam::T);
 	}
 
-	// категории меню закупки: список оружия с учётом команды
+	// категории меню закупки: список оружия с учётом команды.
+	// Индекс = цифра на клавиатуре минус один; нулевая (снаряжение) пустая,
+	// броня рисуется и покупается отдельно.
 	TArray<ERSWeapon> BuyCategory(int32 Category, ERSTeam Team);
 	const TCHAR* BuyCategoryName(int32 Category);
-	constexpr int32 BuyCategories = 5; // 5-я категория (индекс 5) — броня, отдельно
+	constexpr int32 BuyCategories = 6;
+	constexpr int32 EquipmentCategory = 0;
 }
