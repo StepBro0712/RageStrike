@@ -55,6 +55,10 @@ private:
 	UPROPERTY()
 	TObjectPtr<AActor> ViewTargetBeforeMenu = nullptr;
 
+	// музыка меню: живёт пока меню открыто
+	UPROPERTY()
+	TObjectPtr<class UAudioComponent> MenuMusic = nullptr;
+
 	TSharedPtr<SRSMenu> MenuWidget;
 	TSharedPtr<SWidget> MenuContainer;
 	bool bMenuOpen = false;

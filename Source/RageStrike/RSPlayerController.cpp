@@ -2,6 +2,8 @@
 #include "RSMenu.h"
 #include "RSCharacter.h"
 #include "RSMenuCamera.h"
+#include "RSAudio.h"
+#include "Components/AudioComponent.h"
 #include "Engine/Engine.h"
 #include "Engine/GameViewportClient.h"
 #include "Widgets/SWeakWidget.h"
@@ -126,6 +128,12 @@ void ARSPlayerController::OpenMenu(bool bStartup)
 
 	ShowMenuCamera();
 
+	if (!MenuMusic)
+	{
+		MenuMusic = UGameplayStatics::SpawnSound2D(this,
+			RSAudio::Get(RSAudio::ESound::MusicMenu), 0.45f, 1.f, 0.f, nullptr, false, false);
+	}
+
 	// в одиночной игре ставим паузу, чтобы боты не расстреляли в меню
 	if (GetNetMode() == NM_Standalone)
 	{
@@ -190,6 +198,13 @@ void ARSPlayerController::CloseMenu()
 	}
 
 	RestoreGameView();
+
+	if (MenuMusic)
+	{
+		MenuMusic->Stop();
+		MenuMusic->DestroyComponent();
+		MenuMusic = nullptr;
+	}
 
 	bShowMouseCursor = false;
 	SetInputMode(FInputModeGameOnly());

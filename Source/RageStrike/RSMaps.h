@@ -21,4 +21,10 @@ namespace RSMaps
 	void SetSelectedIndex(int32 Index);
 
 	const FRSMapDef& Selected();
+
+	// Ручная разметка спавнов: игрок встаёт в нужное место и жмёт клавишу.
+	// Точки хранятся в конфиге для каждой карты отдельно, поэтому автоподбор
+	// по геометрии больше не нужен там, где мы указали место сами.
+	bool GetCustomSpawn(int32 MapIndex, bool bCT, FVector& OutLocation);
+	void SetCustomSpawn(int32 MapIndex, bool bCT, const FVector& Location);
 }

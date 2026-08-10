@@ -2,6 +2,9 @@
 #include "RSPlayerController.h"
 #include "RSMaps.h"
 #include "RSWeaponData.h"
+#include "RSNet.h"
+#include "RSMatchSettings.h"
+#include "HAL/PlatformApplicationMisc.h"
 #include "GameFramework/GameUserSettings.h"
 #include "Engine/Engine.h"
 #include "Misc/App.h"
@@ -372,21 +375,135 @@ TSharedRef<SWidget> SRSMenu::MakePlayPanel()
 			})
 		]
 
+		// --- правила матча ---
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 14.f, 0.f, 4.f)
 		[
-			MakeButton(FText::FromString(TEXT("Создать лобби (LAN)")), [this]()
+			SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Bold", 14))
+			.ColorAndOpacity(MenuAccent)
+			.Text(FText::FromString(TEXT("Правила матча")))
+		]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
+		[
+			MakeCycleRow(FText::FromString(TEXT("Игроков в команде")),
+				TAttribute<FText>::Create([]()
+				{
+					return FText::FromString(FString::Printf(TEXT("%d"), RSMatch::GetTeamSize()));
+				}),
+				[]() { RSMatch::SetTeamSize(RSMatch::GetTeamSize() - 1); },
+				[]() { RSMatch::SetTeamSize(RSMatch::GetTeamSize() + 1); })
+		]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
+		[
+			MakeCycleRow(FText::FromString(TEXT("Раундов до победы")),
+				TAttribute<FText>::Create([]()
+				{
+					const int32 Win = RSMatch::GetRoundsToWin();
+					return FText::FromString(FString::Printf(TEXT("%d  (всего %d)"),
+						Win, RSMatch::RoundsTotalFor(Win)));
+				}),
+				[]() { RSMatch::SetRoundsToWin(RSMatch::GetRoundsToWin() - 1); },
+				[]() { RSMatch::SetRoundsToWin(RSMatch::GetRoundsToWin() + 1); })
+		]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
+		[
+			MakeCycleRow(FText::FromString(TEXT("Добирать ботами")),
+				TAttribute<FText>::Create([]()
+				{
+					return FText::FromString(RSMatch::GetUseBots() ? TEXT("Да") : TEXT("Нет"));
+				}),
+				[]() { RSMatch::SetUseBots(!RSMatch::GetUseBots()); },
+				[]() { RSMatch::SetUseBots(!RSMatch::GetUseBots()); })
+		]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f, 0.f, 0.f)
+		[
+			SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Regular", 11))
+			.ColorAndOpacity(MenuDim)
+			.Text(FText::FromString(TEXT("Правила применяются при создании матча или сервера")))
+		]
+
+		// --- сетевая игра ---
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 16.f, 0.f, 6.f)
+		[
+			SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Bold", 14))
+			.ColorAndOpacity(MenuAccent)
+			.Text(FText::FromString(TEXT("Игра по сети")))
+		]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
+		[
+			MakeButton(FText::FromString(TEXT("Создать сервер")), [this]()
 			{
+				// сервер поднимаем и сразу просим роутер открыть порт
+				RSNet::RequestPortMapping();
 				if (PC.IsValid()) { PC->HostGame(); }
 			})
 		]
 
+		// адрес, который надо дать друзьям
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 6.f, 0.f, 0.f)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+			[
+				SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Regular", 12))
+				.ColorAndOpacity(MenuDim)
+				.Text(FText::FromString(TEXT("Твой адрес: ")))
+			]
+			+ SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)
+			[
+				SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Bold", 13))
+				.ColorAndOpacity(FSlateColor(FLinearColor::White))
+				.Text_Lambda([]() { return FText::FromString(RSNet::GetJoinAddress()); })
+			]
+			+ SHorizontalBox::Slot().AutoWidth()
+			[
+				MakeButton(FText::FromString(TEXT("Копировать")), []()
+				{
+					FPlatformApplicationMisc::ClipboardCopy(*RSNet::GetJoinAddress());
+				})
+			]
+		]
+
+		// состояние проброса порта: без него друзья не подключатся извне
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)
+		[
+			SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Regular", 11))
+			.AutoWrapText(true)
+			.ColorAndOpacity_Lambda([]()
+			{
+				switch (RSNet::GetPortState())
+				{
+				case RSNet::EPortState::Mapped: return FSlateColor(MenuGreen);
+				case RSNet::EPortState::Failed: return FSlateColor(FLinearColor(1.f, 0.45f, 0.4f));
+				default:                        return FSlateColor(MenuDim);
+				}
+			})
+			.Text_Lambda([]() { return FText::FromString(RSNet::GetPortMessage()); })
+		]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
+		[
+			SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Regular", 11))
+			.ColorAndOpacity(MenuDim)
+			.Text_Lambda([]()
+			{
+				return FText::FromString(FString::Printf(TEXT("В домашней сети: %s:%d"),
+					*RSNet::GetLocalAddress(), RSNet::GamePort));
+			})
+		]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 8.f, 0.f, 0.f)
 		[
 			SNew(SHorizontalBox)
 			+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 6.f, 0.f)
 			[
 				SAssignNew(IPBox, SEditableTextBox)
 				.Font(FCoreStyle::GetDefaultFontStyle("Regular", 13))
+				.HintText(FText::FromString(TEXT("адрес сервера, например 1.2.3.4:7777")))
 				.Text(FText::FromString(TEXT("127.0.0.1")))
 			]
 			+ SHorizontalBox::Slot().AutoWidth()
@@ -432,6 +549,17 @@ TSharedRef<SWidget> SRSMenu::MakeSettingsPanel()
 			MakeCycleRow(FText::FromString(TEXT("Верт. синхронизация")),
 				TAttribute<FText>::CreateSP(this, &SRSMenu::GetVSyncText),
 				[this]() { ToggleVSync(); }, [this]() { ToggleVSync(); })
+		]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)
+		[
+			MakeCycleRow(FText::FromString(TEXT("Счётчик FPS и нагрузки")),
+				TAttribute<FText>::Create([]()
+				{
+					return FText::FromString(RSOptions::PerfModeName(RSOptions::GetPerfMode()));
+				}),
+				[]() { RSOptions::SetPerfMode(RSOptions::GetPerfMode() - 1); },
+				[]() { RSOptions::SetPerfMode(RSOptions::GetPerfMode() + 1); })
 		]
 
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 10.f, 0.f, 2.f)
@@ -571,6 +699,9 @@ TSharedRef<SWidget> SRSMenu::MakePlayerCard()
 void SRSMenu::Construct(const FArguments& InArgs)
 {
 	PC = InArgs._OwnerPC;
+
+	// внешний адрес узнаём заранее, чтобы к моменту хоста он уже был на экране
+	RSNet::RequestPublicIP();
 
 	ChildSlot
 	[

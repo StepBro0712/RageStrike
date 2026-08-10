@@ -8,6 +8,12 @@
 #include "RSGrenade.h"
 #include "RSFireZone.h"
 #include "RSHUD.h"
+#include "RSMaps.h"
+#include "RSAudio.h"
+#include "RSTracer.h"
+#include "RSViewModel.h"
+#include "Animation/AnimSequence.h"
+#include "Animation/AnimSingleNodeInstance.h"
 #include "Camera/CameraComponent.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Components/CapsuleComponent.h"
@@ -17,6 +23,7 @@
 #include "UObject/ConstructorHelpers.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
+#include "Components/AudioComponent.h"
 #include "Components/InputComponent.h"
 #include "InputCoreTypes.h"
 #include "Kismet/GameplayStatics.h"
@@ -142,6 +149,14 @@ ARSCharacter::ARSCharacter()
 	GunMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	GunMesh->SetStaticMesh(AKAsset);
 	GunMesh->SetOnlyOwnerSee(true);
+
+	// скелетная вьюмодель: висит у камеры, видна только владельцу
+	FPGun = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("FPGun"));
+	FPGun->SetupAttachment(Camera);
+	FPGun->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	FPGun->SetOnlyOwnerSee(true);
+	FPGun->SetCastShadow(false);
+	FPGun->SetVisibility(false);
 
 	TPGunMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("TPGunMesh"));
 	TPGunMesh->SetupAttachment(GetMesh(), TEXT("hand_r"));
@@ -570,7 +585,9 @@ void ARSCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 	// B освободили под закупку, управление ботами ушло на F9-F12
 	PlayerInputComponent->BindKey(EKeys::F9, IE_Pressed, this, &ARSCharacter::AddBot);
 	PlayerInputComponent->BindKey(EKeys::F10, IE_Pressed, this, &ARSCharacter::RemoveBot);
-	PlayerInputComponent->BindKey(EKeys::F12, IE_Pressed, this, &ARSCharacter::ClearBots);
+	// F11/F12 отмечают спавны команд там, где стоит игрок
+	PlayerInputComponent->BindKey(EKeys::F11, IE_Pressed, this, &ARSCharacter::MarkSpawnT);
+	PlayerInputComponent->BindKey(EKeys::F12, IE_Pressed, this, &ARSCharacter::MarkSpawnCT);
 	PlayerInputComponent->BindKey(EKeys::B, IE_Pressed, this, &ARSCharacter::ToggleBuyMenu);
 	PlayerInputComponent->BindKey(EKeys::G, IE_Pressed, this, &ARSCharacter::DropCurrentWeapon);
 	PlayerInputComponent->BindKey(EKeys::Tab, IE_Pressed, this, &ARSCharacter::ShowScoreboard);
@@ -743,6 +760,76 @@ void ARSCharacter::StartInspect()
 	{
 		InspectEndTime = Now + 2.6f;
 	}
+}
+
+void ARSCharacter::UpdateFootsteps(float DeltaTime)
+{
+	if (!bAlive || IsFrozen())
+	{
+		return;
+	}
+
+	UCharacterMovementComponent* Move = GetCharacterMovement();
+	const bool bFalling = Move->IsFalling();
+
+	// приземление
+	if (bWasFallingAudio && !bFalling)
+	{
+		if (USoundBase* Snd = RSAudio::Get(RSAudio::ESound::Land))
+		{
+			UGameplayStatics::PlaySoundAtLocation(this, Snd, GetActorLocation(), 0.8f);
+		}
+		StepDistance = 0.f;
+	}
+	bWasFallingAudio = bFalling;
+
+	if (bFalling)
+	{
+		return;
+	}
+
+	const float Speed = GetVelocity().Size2D();
+	if (Speed < 40.f)
+	{
+		StepDistance = 0.f;
+		return;
+	}
+
+	// шаг раз в 180 см пути: на бегу чаще, на тихой ходьбе реже и глуше
+	StepDistance += Speed * DeltaTime;
+	if (StepDistance < 180.f)
+	{
+		return;
+	}
+	StepDistance = 0.f;
+
+	const bool bQuiet = bWalking || bIsCrouched;
+	const bool bRunning = !bQuiet && Speed > GetWeaponMaxSpeed() * 0.6f;
+	USoundBase* Snd = RSAudio::Get(bRunning ? RSAudio::ESound::StepRun : RSAudio::ESound::StepWalk);
+	if (Snd)
+	{
+		// тихая ходьба и есть тихая ходьба: слышно только вблизи
+		UGameplayStatics::PlaySoundAtLocation(this, Snd, GetActorLocation(),
+			bQuiet ? 0.25f : (bRunning ? 1.f : 0.7f));
+	}
+}
+
+void ARSCharacter::MarkSpawn(bool bCT)
+{
+	if (!IsLocallyControlled())
+	{
+		return;
+	}
+	const int32 MapIndex = RSMaps::GetSelectedIndex();
+	RSMaps::SetCustomSpawn(MapIndex, bCT, GetActorLocation());
+
+	// подтверждение прямо на экран: в бою в лог никто не смотрит
+	SpawnMarkMessage = FString::Printf(TEXT("Спавн %s отмечен: %s"),
+		bCT ? TEXT("КТ") : TEXT("Т"), *GetActorLocation().ToCompactString());
+	SpawnMarkUntil = GetWorld()->GetTimeSeconds() + 4.f;
+
+	UE_LOG(LogTemp, Log, TEXT("RageStrike: spawn %s for map %d = %s"),
+		bCT ? TEXT("CT") : TEXT("T"), MapIndex, *GetActorLocation().ToString());
 }
 
 void ARSCharacter::RequestWeapon(ERSWeapon NewWeapon)
@@ -930,9 +1017,82 @@ void ARSCharacter::ApplyWeaponVisuals()
 		DrawStartTime = GetWorld()->GetTimeSeconds();
 	}
 
+	// Если у оружия есть скелетная модель с анимациями CS2, показываем её
+	// вместо статик-меша: она умеет доставание, стрельбу и перезарядку.
+	const FRSViewModel* VM = RSViewModel::Get(CurrentWeapon);
+	bUsingSkeletalVM = (VM != nullptr) && !bThirdPerson;
+
+	if (bUsingSkeletalVM)
+	{
+		FPGun->SetSkeletalMesh(VM->Mesh);
+
+		// та же подгонка по габаритам, что у статик-мешей
+		const FVector Extent = VM->Mesh->GetBounds().BoxExtent;
+		const float Longest = FMath::Max3(Extent.X, Extent.Y, Extent.Z) * 2.f;
+		const float Fit = (Longest > 0.01f)
+			? RSWeapons::RealLength(CurrentWeapon) * 0.55f / Longest : 1.f;
+		FPGun->SetRelativeScale3D(FVector(Fit));
+
+		FRotator Align(0.f, -90.f, 0.f);
+		if (Extent.Z >= Extent.X && Extent.Z >= Extent.Y)
+		{
+			Align = (FQuat(Align) * FQuat(FRotator(0.f, 0.f, -90.f))).Rotator();
+		}
+		else if (Extent.X > Extent.Y)
+		{
+			Align = (FQuat(Align) * FQuat(FRotator(0.f, 90.f, 0.f))).Rotator();
+		}
+
+		GunBaseRot = Align;
+		GunBaseLoc = CamLoc - FQuat(Align).RotateVector(VM->Mesh->GetBounds().Origin * Fit);
+		GunBaseLoc.X += RSWeapons::RealLength(CurrentWeapon) * 0.55f * 0.35f;
+
+		FPGun->SetRelativeLocation(GunBaseLoc);
+		FPGun->SetRelativeRotation(GunBaseRot);
+
+		// доставание, затем простой — как в CS при смене оружия
+		if (VM->Draw)
+		{
+			PlayVMAnim(VM->Draw, false, VM->Draw->GetPlayLength() * 0.9f);
+		}
+		else if (VM->Idle)
+		{
+			PlayVMAnim(VM->Idle, true, 0.f);
+		}
+	}
+
 	ArmsMesh->SetVisibility(bUseArms && !bThirdPerson);
-	GunMesh->SetVisibility(!bThirdPerson);
+	GunMesh->SetVisibility(!bThirdPerson && !bUsingSkeletalVM);
+	FPGun->SetVisibility(bUsingSkeletalVM);
 	TPGunMesh->SetOwnerNoSee(!bThirdPerson);
+}
+
+void ARSCharacter::PlayVMAnim(UAnimSequence* Anim, bool bLoop, float LockSeconds, float PlayRate)
+{
+	if (!FPGun || !Anim)
+	{
+		return;
+	}
+	FPGun->PlayAnimation(Anim, bLoop);
+	FPGun->SetPlayRate(PlayRate);
+	VMAnimLockUntil = GetWorld()->GetTimeSeconds() + LockSeconds;
+}
+
+void ARSCharacter::UpdateSkeletalViewModel()
+{
+	if (!bUsingSkeletalVM || GetWorld()->GetTimeSeconds() < VMAnimLockUntil)
+	{
+		return; // доигрывает выстрел, перезарядка или доставание
+	}
+	// закончилось — возвращаемся в простой
+	if (const FRSViewModel* VM = RSViewModel::Get(CurrentWeapon))
+	{
+		if (VM->Idle && FPGun->GetSingleNodeInstance()
+			&& FPGun->GetSingleNodeInstance()->GetAnimationAsset() != VM->Idle)
+		{
+			PlayVMAnim(VM->Idle, true, 0.f);
+		}
+	}
 }
 
 void ARSCharacter::ToggleView()
@@ -1180,6 +1340,22 @@ void ARSCharacter::Reload()
 	ReloadEndTime = GetWorld()->GetTimeSeconds() + Def.ReloadTime;
 	PlayArmsAnim(AnimReload, false, Def.ReloadTime);
 
+	if (USoundBase* Snd = RSAudio::Get(RSAudio::ESound::Reload))
+	{
+		UGameplayStatics::PlaySoundAtLocation(this, Snd, GetActorLocation(), 0.9f);
+	}
+
+	// анимация перезарядки растягивается ровно на время перезарядки оружия
+	if (const FRSViewModel* VM = RSViewModel::Get(CurrentWeapon))
+	{
+		if (VM->Reload)
+		{
+			const float Rate = FMath::Clamp(
+				VM->Reload->GetPlayLength() / FMath::Max(0.2f, Def.ReloadTime), 0.25f, 4.f);
+			PlayVMAnim(VM->Reload, false, Def.ReloadTime, Rate);
+		}
+	}
+
 	GetWorldTimerManager().SetTimer(ReloadTimer, this, &ARSCharacter::FinishReload, Def.ReloadTime, false);
 }
 
@@ -1261,9 +1437,28 @@ void ARSCharacter::Tick(float DeltaTime)
 		Move->StopMovementImmediately();
 	}
 
+	UpdateFootsteps(DeltaTime);
+
 	if (!IsLocallyControlled())
 	{
 		return;
+	}
+
+	// музыка закупки: только у своего игрока и только в фазу покупок
+	{
+		const ARSGameState* State = GetWorld()->GetGameState<ARSGameState>();
+		const bool bWantMusic = State && State->Phase == ERSPhase::Intermission;
+		if (bWantMusic && !BuyMusic)
+		{
+			BuyMusic = UGameplayStatics::SpawnSound2D(this,
+				RSAudio::Get(RSAudio::ESound::MusicBuy), 0.5f, 1.f, 0.f, nullptr, false, false);
+		}
+		else if (!bWantMusic && BuyMusic)
+		{
+			BuyMusic->Stop();
+			BuyMusic->DestroyComponent();
+			BuyMusic = nullptr;
+		}
 	}
 
 	// auto-bhop: пока держим пробел, прыгаем сразу как коснулись земли
@@ -1469,6 +1664,18 @@ void ARSCharacter::TryFire()
 
 	PlayArmsAnim(AnimFire, false, 0.2f);
 
+	// у скелетной вьюмодели своя анимация выстрела, три варианта по кругу
+	if (const FRSViewModel* VM = RSViewModel::Get(CurrentWeapon))
+	{
+		if (UAnimSequence* Shot = VM->Shoot[RecoilIndex % 3])
+		{
+			// длинную анимацию поджимаем под темп стрельбы
+			const float Rate = FMath::Clamp(Shot->GetPlayLength() / FMath::Max(0.05f, Def.Interval),
+				1.f, 8.f);
+			PlayVMAnim(Shot, false, Def.Interval * 0.9f, Rate);
+		}
+	}
+
 	// вьюмодель дёргается назад, осмотр прерывается
 	GunKick = 1.f;
 	InspectEndTime = -10.f;
@@ -1581,6 +1788,11 @@ void ARSCharacter::UpdateViewmodel(float DeltaTime)
 		return;
 	}
 
+	UpdateSkeletalViewModel();
+
+	// покачивание и отдача применяются к тому, что сейчас на экране
+	USceneComponent* Visual = bUsingSkeletalVM ? (USceneComponent*)FPGun : (USceneComponent*)GunMesh;
+
 	const float Now = GetWorld()->GetTimeSeconds();
 	UCharacterMovementComponent* Move = GetCharacterMovement();
 
@@ -1628,8 +1840,9 @@ void ARSCharacter::UpdateViewmodel(float DeltaTime)
 	Offset.Z -= (1.f - DrawAlpha) * 25.f;
 	RotOffset.Pitch -= (1.f - DrawAlpha) * 35.f;
 
-	// перезарядка: ствол опущен и покачивается
-	if (bReloading)
+	// у скелетной вьюмодели перезарядку и осмотр играет сама анимация,
+	// процедурные наклоны только помешают
+	if (bReloading && !bUsingSkeletalVM)
 	{
 		const float A = FMath::Clamp((ReloadEndTime - Now) / ReloadDuration, 0.f, 1.f);
 		const float Dip = FMath::Sin(A * PI); // плавно вниз и обратно
@@ -1639,7 +1852,7 @@ void ARSCharacter::UpdateViewmodel(float DeltaTime)
 	}
 
 	// осмотр по F: оружие поворачивается и наклоняется
-	if (Now < InspectEndTime)
+	if (Now < InspectEndTime && !bUsingSkeletalVM)
 	{
 		const float A = 1.f - FMath::Clamp((InspectEndTime - Now) / 2.6f, 0.f, 1.f);
 		const float Curve = FMath::Sin(A * PI);
@@ -1654,8 +1867,8 @@ void ARSCharacter::UpdateViewmodel(float DeltaTime)
 		Offset.Z -= FMath::Sin((Now - LandDipStart) / 0.25f * PI) * 3.f;
 	}
 
-	GunMesh->SetRelativeLocation(GunBaseLoc + Offset);
-	GunMesh->SetRelativeRotation(GunBaseRot + RotOffset);
+	Visual->SetRelativeLocation(GunBaseLoc + Offset);
+	Visual->SetRelativeRotation(GunBaseRot + RotOffset);
 }
 
 void ARSCharacter::ServerFire_Implementation(FVector Start, FVector_NetQuantizeNormal Dir, ERSWeapon Weapon)
@@ -1748,13 +1961,19 @@ void ARSCharacter::FireOnePellet(const FVector& Start, const FVector& Dir, ERSWe
 
 void ARSCharacter::MulticastTracer_Implementation(FVector Start, FVector End, bool bMelee)
 {
+	const FRSWeaponDef& Def = RSWeapons::Get(CurrentWeapon);
+
 	if (!bMelee)
 	{
-		DrawDebugLine(GetWorld(), Start, End, FColor::Yellow, false, 0.06f, 0, 0.5f);
+		// светящаяся трасса вместо отладочной линии
+		const bool bBig = (Def.Mesh == ERSMeshKind::Sniper) || Def.Pellets > 1;
+		ARSTracer::Spawn(GetWorld(), Start, End, bBig);
 	}
-	if (FireSound)
+
+	// у ножа свой замах, у стволов — звук по классу оружия
+	if (USoundBase* Shot = RSAudio::GetFireSound(CurrentWeapon))
 	{
-		UGameplayStatics::PlaySoundAtLocation(this, FireSound, Start, bMelee ? 0.25f : 0.5f);
+		UGameplayStatics::PlaySoundAtLocation(this, Shot, Start, bMelee ? 0.7f : 1.f);
 	}
 }
 

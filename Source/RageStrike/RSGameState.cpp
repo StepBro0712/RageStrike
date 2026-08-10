@@ -11,6 +11,10 @@ void ARSGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLife
 	DOREPLIFETIME(ARSGameState, PhaseEndsAt);
 	DOREPLIFETIME(ARSGameState, Phase);
 	DOREPLIFETIME(ARSGameState, Announcement);
+	DOREPLIFETIME(ARSGameState, RoundsTotal);
+	DOREPLIFETIME(ARSGameState, RoundsToWin);
+	DOREPLIFETIME(ARSGameState, HalfTimeRound);
+	DOREPLIFETIME(ARSGameState, TeamSize);
 }
 
 float ARSGameState::GetTimeLeft() const

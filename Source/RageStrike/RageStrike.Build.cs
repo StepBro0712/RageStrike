@@ -15,7 +15,14 @@ public class RageStrike : ModuleRules
 			"Slate",
 			"SlateCore",
 			"AssetRegistry",
-			"Landscape"
+			"Landscape",
+			// сетевая игра через интернет: публичный адрес и проброс порта
+			"HTTP",
+			"Sockets",
+			"Networking",
+			"ApplicationCore",
+			"RenderCore",
+			"RHI"
 		});
 	}
 }

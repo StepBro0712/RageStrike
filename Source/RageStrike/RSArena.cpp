@@ -81,6 +81,29 @@ float ARSArena::GetMapFloor(UWorld* World)
 
 FVector ARSArena::FindSpawnPoint(UWorld* World, ERSTeam Team, bool bTeamZone)
 {
+	// Место, отмеченное вручную, важнее любого автоподбора: на скачанных
+	// картах геометрия не даёт понять, где настоящие спавны команд.
+	if (bTeamZone)
+	{
+		FVector Marked;
+		if (RSMaps::GetCustomSpawn(RSMaps::GetSelectedIndex(), Team == ERSTeam::CT, Marked))
+		{
+			// разводим состав по площадке и ставим на пол
+			const FVector2D Jitter = FMath::RandPointInCircle(320.f);
+			const FVector Probe = Marked + FVector(Jitter.X, Jitter.Y, 300.f);
+
+			FHitResult Hit;
+			FCollisionQueryParams Params;
+			Params.bTraceComplex = true;
+			if (World->LineTraceSingleByChannel(Hit, Probe, Probe - FVector(0.f, 0.f, 2000.f),
+				ECC_Visibility, Params))
+			{
+				return Hit.ImpactPoint + FVector(0.f, 0.f, 95.f);
+			}
+			return Marked;
+		}
+	}
+
 	float Radius = 3000.f;
 	FVector Center = FVector::ZeroVector;
 	float Ground = 0.f;

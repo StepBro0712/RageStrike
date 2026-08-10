@@ -142,6 +142,10 @@ public:
 	// сервер помечает последний хит хедшотом для killfeed
 	bool bLastHitHeadshot = false;
 
+	// подтверждение разметки спавна, показывает HUD
+	FString SpawnMarkMessage;
+	float SpawnMarkUntil = -10.f;
+
 	int32 GetAmmo() const;
 	int32 GetMaxAmmo() const;
 	int32 GetReserveAmmo() const;
@@ -159,6 +163,10 @@ public:
 
 	UPROPERTY(VisibleAnywhere)
 	UStaticMeshComponent* GunMesh;      // вид от первого лица (только владелец)
+
+	// скелетная вьюмодель с анимациями CS2 — там, где модель приехала с ригом
+	UPROPERTY(VisibleAnywhere)
+	USkeletalMeshComponent* FPGun;
 
 	UPROPERTY(VisibleAnywhere)
 	UStaticMeshComponent* TPGunMesh;    // оружие в руке для остальных игроков
@@ -200,6 +208,11 @@ private:
 
 	void SelectGrenade(); // 4 — листает имеющиеся гранаты
 	void StartInspect();  // F — осмотр оружия
+
+	// разметка спавнов: встать в нужное место и нажать F11 (T) или F12 (CT)
+	void MarkSpawnT() { MarkSpawn(false); }
+	void MarkSpawnCT() { MarkSpawn(true); }
+	void MarkSpawn(bool bCT);
 	void ToggleBuyMenu();
 	void ShowScoreboard() { bScoreboardOpen = true; }
 	void HideScoreboard() { bScoreboardOpen = false; }
@@ -346,6 +359,12 @@ private:
 	void UpdateArmsAnimation();
 	void PlayArmsAnim(UAnimSequence* Anim, bool bLoop, float LockSeconds);
 
+	// скелетная вьюмодель: настоящие анимации вместо процедурных
+	bool bUsingSkeletalVM = false;
+	float VMAnimLockUntil = 0.f;
+	void PlayVMAnim(UAnimSequence* Anim, bool bLoop, float LockSeconds, float PlayRate = 1.f);
+	void UpdateSkeletalViewModel();
+
 	UAnimSequence* CurrentArmsAnim = nullptr;
 	float ArmsAnimLockUntil = 0.f;
 
@@ -382,6 +401,16 @@ private:
 
 	// замедление от попаданий (tagging)
 	float TaggedUntil = -10.f;
+
+	// шаги слышны и от чужих пешек: движение реплицируется, поэтому каждый
+	// клиент озвучивает всех сам
+	void UpdateFootsteps(float DeltaTime);
+	float StepDistance = 0.f;
+	bool bWasFallingAudio = false;
+
+	// музыка закупки: включается на время фазы покупок
+	UPROPERTY()
+	class UAudioComponent* BuyMusic = nullptr;
 
 	// --- процедурная анимация вьюмодели ---
 	void UpdateViewmodel(float DeltaTime);

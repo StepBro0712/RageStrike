@@ -49,6 +49,10 @@ private:
 	void DrawMoney(const ARSCharacter* Player);
 	void DrawRadar(const ARSCharacter* Player);
 	void DrawKillFeed(const ARSCharacter* Player);
+	void DrawPerfStats();
+	// сглаженный FPS: мгновенный дёргается и его невозможно читать
+	float SmoothedFPS = 0.f;
+
 	void DrawBoxOutline(float X, float Y, float W, float H, const FLinearColor& Color, float Thickness);
 	void DrawRoundInfo(const ARSCharacter* Player);
 	void DrawBuyMenu(const ARSCharacter* Player);

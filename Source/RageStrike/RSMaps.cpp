@@ -32,4 +32,29 @@ namespace RSMaps
 	{
 		return All()[GetSelectedIndex()];
 	}
+
+	namespace
+	{
+		FString SpawnKey(int32 MapIndex, bool bCT)
+		{
+			return FString::Printf(TEXT("Spawn%s_%d"), bCT ? TEXT("CT") : TEXT("T"), MapIndex);
+		}
+	}
+
+	bool GetCustomSpawn(int32 MapIndex, bool bCT, FVector& OutLocation)
+	{
+		FString Value;
+		if (!GConfig->GetString(TEXT("RageStrike"), *SpawnKey(MapIndex, bCT), Value, GGameUserSettingsIni))
+		{
+			return false;
+		}
+		return OutLocation.InitFromString(Value);
+	}
+
+	void SetCustomSpawn(int32 MapIndex, bool bCT, const FVector& Location)
+	{
+		GConfig->SetString(TEXT("RageStrike"), *SpawnKey(MapIndex, bCT),
+			*Location.ToString(), GGameUserSettingsIni);
+		GConfig->Flush(false, GGameUserSettingsIni);
+	}
 }

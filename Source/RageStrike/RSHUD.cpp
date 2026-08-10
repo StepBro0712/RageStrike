@@ -4,6 +4,12 @@
 #include "RSGameMode.h"
 #include "RSGameState.h"
 #include "RSPlayerController.h"
+#include "RSMatchSettings.h"
+#include "RSIcons.h"
+#include "Engine/Texture2D.h"
+#include "RenderCore.h"
+#include "RHI.h"
+#include "Misc/App.h"
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
 #include "Engine/Font.h"
@@ -35,6 +41,31 @@ void ARSHUD::DrawBoxOutline(float X, float Y, float W, float H, const FLinearCol
 	DrawLine(X, Y + H, X + W, Y + H, Color, Thickness);
 	DrawLine(X, Y, X, Y + H, Color, Thickness);
 	DrawLine(X + W, Y, X + W, Y + H, Color, Thickness);
+}
+
+// Иконка оружия из CS2. Если её нет, откатываемся на рисованный силуэт.
+static void DrawWeaponIcon(UCanvas* Canvas, float X, float Y, float W, float H,
+	ERSWeapon Weapon, const FLinearColor& Color)
+{
+	if (!Canvas)
+	{
+		return;
+	}
+	if (UTexture2D* Icon = RSIcons::ForWeapon(Weapon))
+	{
+		Canvas->K2_DrawTexture(Icon, FVector2D(X, Y), FVector2D(W, H),
+			FVector2D::ZeroVector, FVector2D::UnitVector, Color, EBlendMode::BLEND_Translucent);
+	}
+}
+
+static void DrawEquipIcon(UCanvas* Canvas, float X, float Y, float W, float H,
+	UTexture2D* Icon, const FLinearColor& Color)
+{
+	if (Canvas && Icon)
+	{
+		Canvas->K2_DrawTexture(Icon, FVector2D(X, Y), FVector2D(W, H),
+			FVector2D::ZeroVector, FVector2D::UnitVector, Color, EBlendMode::BLEND_Translucent);
+	}
 }
 
 static void DrawWeaponSilhouette(UCanvas* Canvas, float X, float Y, float W, float H, ERSMeshKind MeshKind, const FLinearColor& Color)
@@ -122,8 +153,16 @@ void ARSHUD::DrawHUD()
 	DrawScoreboard(Player);
 	// оверлей читов рисуем последним: он должен лежать поверх закупки
 	DrawCheatPanel(Player);
+	DrawPerfStats();
 
 	const float Now = GetWorld()->GetTimeSeconds();
+
+	// подтверждение разметки спавна
+	if (Now < Player->SpawnMarkUntil)
+	{
+		DrawText(Player->SpawnMarkMessage, ColGold,
+			Canvas->SizeX * 0.5f - 200.f, Canvas->SizeY * 0.72f, GEngine->GetSmallFont(), 1.4f);
+	}
 
 	// Хитмаркер попадания
 	if (Now - Player->LastHitMarkerTime < 0.15f)
@@ -402,6 +441,47 @@ void ARSHUD::DrawKillFeed(const ARSCharacter* Player)
 	}
 }
 
+void ARSHUD::DrawPerfStats()
+{
+	const int32 Mode = RSOptions::GetPerfMode();
+	if (Mode <= 0)
+	{
+		return;
+	}
+
+	const float Delta = FMath::Max(FApp::GetDeltaTime(), KINDA_SMALL_NUMBER);
+	const float Instant = 1.f / Delta;
+	SmoothedFPS = (SmoothedFPS <= 0.f) ? Instant : FMath::Lerp(SmoothedFPS, Instant, 0.08f);
+
+	UFont* Font = GEngine->GetSmallFont();
+	const float X = Canvas->SizeX - 150.f;
+	float Y = 8.f;
+
+	const int32 FPS = FMath::RoundToInt(SmoothedFPS);
+	// зелёный от 90, жёлтый от 45, ниже красный
+	const FLinearColor FPSColor = (FPS >= 90) ? ColCSGreen
+		: (FPS >= 45) ? ColGold : ColRed;
+
+	DrawRect(FLinearColor(0.f, 0.f, 0.f, 0.45f), X - 8.f, Y - 4.f, 148.f, (Mode >= 2) ? 74.f : 22.f);
+	DrawText(FString::Printf(TEXT("%d FPS   %.1f мс"), FPS, Delta * 1000.f),
+		FPSColor, X, Y, Font, 1.15f);
+
+	if (Mode >= 2)
+	{
+		Y += 18.f;
+		const float GameMs = FPlatformTime::ToMilliseconds(GGameThreadTime);
+		const float RenderMs = FPlatformTime::ToMilliseconds(GRenderThreadTime);
+		// время кадра видеокарты движок держит в отдельном счётчике
+		const float GPUMs = FPlatformTime::ToMilliseconds(RHIGetGPUFrameCycles());
+
+		DrawText(FString::Printf(TEXT("ЦП игра    %.1f мс"), GameMs), ColDim, X, Y, Font, 1.05f);
+		Y += 16.f;
+		DrawText(FString::Printf(TEXT("ЦП отрис.  %.1f мс"), RenderMs), ColDim, X, Y, Font, 1.05f);
+		Y += 16.f;
+		DrawText(FString::Printf(TEXT("ГП         %.1f мс"), GPUMs), ColDim, X, Y, Font, 1.05f);
+	}
+}
+
 bool ARSHUD::GetMouseOnCanvas(FVector2D& Out) const
 {
 	APlayerController* PC = GetOwningPlayerController();
@@ -571,8 +651,7 @@ void ARSHUD::DrawHealthArmor(const ARSCharacter* Player)
 		return;
 	}
 
-	const ERSMeshKind MeshKind = RSWeapons::Get(Player->CurrentWeapon).Mesh;
-	DrawWeaponSilhouette(Canvas, AmmoX + 110.f, AmmoY - 26.f, 60.f, 22.f, MeshKind, ColWhite);
+	DrawWeaponIcon(Canvas, AmmoX + 96.f, AmmoY - 32.f, 76.f, 28.f, Player->CurrentWeapon, ColWhite);
 	DrawText(Player->GetWeaponName().ToUpper(), ColDim, AmmoX + 110.f, AmmoY - 6.f, Small, 1.15f);
 
 	if (RSWeapons::IsGrenade(Player->CurrentWeapon))
@@ -731,7 +810,7 @@ void ARSHUD::DrawScoreboard(const ARSCharacter* Player)
 	if (State)
 	{
 		const FString Title = FString::Printf(TEXT("CT  %d : %d  T     РАУНД %d / %d"),
-			State->ScoreCT, State->ScoreT, State->RoundNumber, ARSGameMode::RoundsTotal);
+			State->ScoreCT, State->ScoreT, State->RoundNumber, State->RoundsTotal);
 		float TW = 0.f, TH = 0.f;
 		GetTextSize(Title, TW, TH, Med, 1.5f);
 		DrawText(Title, ColGold, Canvas->SizeX * 0.5f - TW * 0.5f, Top - 10.f, Med, 1.5f);
@@ -882,6 +961,9 @@ void ARSHUD::DrawBuyMenu(const ARSCharacter* Player)
 
 				DrawText(FString::Printf(TEXT("%d"), i + 1), ColDim, CX + 6.f, CY + 4.f, Font, 1.0f);
 				DrawText(EItems[i].Name, bCan ? ColWhite : ColDim, CX + 20.f, CY + 4.f, Font, 1.1f);
+				DrawEquipIcon(Canvas, CX + ColW - 46.f, CY + 18.f, 38.f, 38.f,
+					(i == 0) ? RSIcons::Kevlar() : RSIcons::Helmet(),
+					bCan ? ColWhite : FLinearColor(0.65f, 0.65f, 0.65f, 0.75f));
 
 				if (EItems[i].bOwned)
 				{
@@ -930,7 +1012,8 @@ void ARSHUD::DrawBuyMenu(const ARSCharacter* Player)
 			DrawText(FString::Printf(TEXT("%d"), i + 1), ColDim, CX + 6.f, CY + 4.f, Font, 1.0f);
 			DrawText(Def.Name, bCan ? ColWhite : ColDim, CX + 20.f, CY + 4.f, Font, 1.1f);
 
-			DrawWeaponSilhouette(Canvas, CX + 10.f, CY + 22.f, ColW - 20.f, 18.f, Def.Mesh, bCan ? ColCSGreen : ColDim);
+			DrawWeaponIcon(Canvas, CX + 8.f, CY + 20.f, ColW - 16.f, 24.f, Items[i],
+				bCan ? ColWhite : FLinearColor(0.65f, 0.65f, 0.65f, 0.75f));
 
 			if (bOwned)
 			{

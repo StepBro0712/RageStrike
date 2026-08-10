@@ -1,6 +1,8 @@
 #include "RSFireZone.h"
 #include "RSCharacter.h"
 #include "RSBot.h"
+#include "RSAudio.h"
+#include "Sound/SoundBase.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/PointLightComponent.h"
 #include "Kismet/GameplayStatics.h"
@@ -71,6 +73,13 @@ void ARSFireZone::BeginPlay()
 		Flame->SetRelativeScale3D(FVector(1.1f, 1.1f, 0.5f) * Rand.FRandRange(0.7f, 1.2f));
 		Flame->RegisterComponent();
 		Flames.Add(Flame);
+	}
+
+	// потрескивание огня, петля на всё время горения
+	if (USoundBase* Snd = RSAudio::Get(RSAudio::ESound::Burn))
+	{
+		UGameplayStatics::SpawnSoundAtLocation(this, Snd, GetActorLocation(),
+			FRotator::ZeroRotator, 0.8f);
 	}
 
 	SetLifeSpan(Duration);

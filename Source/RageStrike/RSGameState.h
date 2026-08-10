@@ -53,6 +53,19 @@ public:
 	UPROPERTY(Replicated)
 	FString Announcement;
 
+	// правила матча задаёт хост, клиенты получают их отсюда
+	UPROPERTY(Replicated)
+	int32 RoundsTotal = 24;
+
+	UPROPERTY(Replicated)
+	int32 RoundsToWin = 13;
+
+	UPROPERTY(Replicated)
+	int32 HalfTimeRound = 12;
+
+	UPROPERTY(Replicated)
+	int32 TeamSize = 5;
+
 	float GetTimeLeft() const;
 
 	// killfeed: сервер рассылает, клиенты копят локально, HUD рисует

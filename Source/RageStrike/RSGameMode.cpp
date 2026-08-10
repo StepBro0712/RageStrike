@@ -7,6 +7,7 @@
 #include "RSMaps.h"
 #include "RSWeaponPickup.h"
 #include "RSPlayerController.h"
+#include "RSMatchSettings.h"
 #include "GameFramework/PlayerStart.h"
 #include "GameFramework/PlayerController.h"
 #include "EngineUtils.h"
@@ -29,6 +30,26 @@ ARSGameState* ARSGameMode::RSState() const
 void ARSGameMode::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// правила матча задаёт тот, кто поднял сервер
+	RoundsToWin = RSMatch::GetRoundsToWin();
+	RoundsTotal = RSMatch::RoundsTotalFor(RoundsToWin);
+	HalfTimeRound = RSMatch::HalfTimeFor(RoundsToWin);
+
+	const int32 TeamSize = RSMatch::GetTeamSize();
+	const bool bBots = RSMatch::GetUseBots();
+	// боты добирают состав: противников по размеру команды, своих на одного
+	// меньше — одно место занимает сам игрок
+	BotCount = bBots ? TeamSize : 0;
+	TeammateCount = bBots ? FMath::Max(0, TeamSize - 1) : 0;
+
+	if (ARSGameState* State = RSState())
+	{
+		State->RoundsTotal = RoundsTotal;
+		State->RoundsToWin = RoundsToWin;
+		State->HalfTimeRound = HalfTimeRound;
+		State->TeamSize = TeamSize;
+	}
 
 	// арена: сервер задаёт Seed, клиенты строят такую же локально по репликации
 	FActorSpawnParameters SP;

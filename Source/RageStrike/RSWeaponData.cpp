@@ -1,7 +1,81 @@
 #include "RSWeaponData.h"
+#include "Engine/StaticMesh.h"
 
 namespace RSWeapons
 {
+	namespace
+	{
+		// у кого нет своей модели — берёт близкую по классу
+		const TCHAR* MeshAssetName(ERSWeapon W)
+		{
+			switch (W)
+			{
+			case ERSWeapon::AK47:    return TEXT("AK47");
+			case ERSWeapon::USP:     return TEXT("USPS");
+			case ERSWeapon::Deagle:  return TEXT("Deagle");
+			case ERSWeapon::M4A4:    return TEXT("M4A4");
+			case ERSWeapon::AUG:     return TEXT("AUG");
+			case ERSWeapon::FAMAS:   return TEXT("Famas");
+			case ERSWeapon::GalilAR: return TEXT("Galil");
+			case ERSWeapon::MP9:     return TEXT("MP9");
+			case ERSWeapon::AWP:     return TEXT("AWP");
+			case ERSWeapon::SG553:   return TEXT("AUG");
+			case ERSWeapon::UMP45:   return TEXT("MP7");
+			case ERSWeapon::MAC10:   return TEXT("MP7");
+			case ERSWeapon::P90:     return TEXT("Bizon");
+			case ERSWeapon::SSG08:   return TEXT("AWP");
+			case ERSWeapon::Nova:    return TEXT("M249");
+			case ERSWeapon::XM1014:  return TEXT("Negev");
+			default:                 return nullptr;
+			}
+		}
+	}
+
+	UStaticMesh* LoadWeaponMesh(ERSWeapon W)
+	{
+		const TCHAR* Name = MeshAssetName(W);
+		if (!Name)
+		{
+			return nullptr;
+		}
+
+		static TMap<FString, UStaticMesh*> Cache;
+		static TSet<FString> Tried;
+		const FString Key(Name);
+
+		if (UStaticMesh** Found = Cache.Find(Key))
+		{
+			return *Found;
+		}
+		if (Tried.Contains(Key))
+		{
+			return nullptr;
+		}
+		Tried.Add(Key);
+
+		const FString Path = FString::Printf(
+			TEXT("/Game/Weapons/CS2/%s/Meshes/SM_%s.SM_%s"), Name, Name, Name);
+		if (UStaticMesh* Mesh = LoadObject<UStaticMesh>(nullptr, *Path))
+		{
+			Mesh->AddToRoot();
+			Cache.Add(Key, Mesh);
+			return Mesh;
+		}
+		return nullptr;
+	}
+
+	float RealLength(ERSWeapon W)
+	{
+		switch (Get(W).Slot)
+		{
+		case ERSSlot::Secondary: return 22.f;
+		case ERSSlot::Knife:     return 30.f;
+		case ERSSlot::Grenade:   return 12.f;
+		default:
+			return (Get(W).Mesh == ERSMeshKind::Sniper) ? 120.f : 90.f;
+		}
+	}
+
 	// Цифры примерно как в CS2: урон за пулю, скорострельность, цены,
 	// скорость бега (юниты CS × 1.84), награда за килл.
 	const FRSWeaponDef& Get(ERSWeapon W)

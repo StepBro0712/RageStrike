@@ -5,6 +5,8 @@
 #include "RSArena.h"
 #include "RSGrenade.h"
 #include "RSFireZone.h"
+#include "RSAudio.h"
+#include "RSTracer.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/SpringArmComponent.h"
@@ -72,6 +74,11 @@ ARSBot::ARSBot()
 	SpectateCam = CreateDefaultSubobject<UCameraComponent>(TEXT("SpectateCam"));
 	SpectateCam->SetupAttachment(SpectateArm);
 
+	GunMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("GunMesh"));
+	GunMesh->SetupAttachment(GetMesh(), TEXT("hand_r"));
+	GunMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	GunMesh->SetCastShadow(true);
+
 	UCharacterMovementComponent* Move = GetCharacterMovement();
 	Move->MaxWalkSpeed = 420.f;
 	bUseControllerRotationYaw = false;
@@ -91,6 +98,38 @@ void ARSBot::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimePr
 	DOREPLIFETIME(ARSBot, Kills);
 	DOREPLIFETIME(ARSBot, Deaths);
 	DOREPLIFETIME(ARSBot, BotNumber);
+	DOREPLIFETIME(ARSBot, Weapon);
+}
+
+void ARSBot::OnRep_Weapon()
+{
+	ApplyWeaponVisuals();
+}
+
+void ARSBot::ApplyWeaponVisuals()
+{
+	if (!GunMesh)
+	{
+		return;
+	}
+
+	UStaticMesh* Gun = RSWeapons::LoadWeaponMesh(Weapon);
+	GunMesh->SetStaticMesh(Gun);
+	GunMesh->SetVisibility(Gun != nullptr);
+	if (!Gun)
+	{
+		return;
+	}
+
+	// та же подгонка, что у игрока: модели скачаны у разных авторов, поэтому
+	// размер и разворот считаем по габаритам меша
+	const FVector Extent = Gun->GetBounds().BoxExtent;
+	const float Longest = FMath::Max3(Extent.X, Extent.Y, Extent.Z) * 2.f;
+	const float Fit = (Longest > 1.f) ? RSWeapons::RealLength(Weapon) / Longest : 1.f;
+	GunMesh->SetRelativeScale3D(FVector(Fit));
+
+	GunPivot = Gun->GetBounds().Origin * Fit;
+	GunHandLoc = FVector(-8.f, 3.f, -2.f);
 }
 
 void ARSBot::RespawnForRound(const FVector& Location)
@@ -124,6 +163,7 @@ void ARSBot::RespawnForRound(const FVector& Location)
 		static const ERSWeapon TGuns[] = { ERSWeapon::AK47, ERSWeapon::GalilAR, ERSWeapon::MAC10, ERSWeapon::SG553 };
 		Weapon = TGuns[FMath::RandRange(0, 3)];
 	}
+	ApplyWeaponVisuals();
 
 	// поднимаем из рэгдолла: возвращаем меш на капсулу и включаем движение
 	GetMesh()->SetSimulatePhysics(false);
@@ -265,6 +305,18 @@ bool ARSBot::CanSee(const AActor* Target) const
 void ARSBot::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+
+	// Оружие в руке: мировой поворот пересчитываем в систему координат кости
+	// hand_r, потому что относительный анимация затирает каждый кадр.
+	// Делается у всех, включая клиентские копии — там ИИ не работает.
+	if (GunMesh && GunMesh->GetStaticMesh() && Health > 0.f)
+	{
+		const FQuat DesiredWorld = (GetActorRotation() + FRotator(-5.f, -90.f, 0.f)).Quaternion();
+		const FQuat BoneQuat = GetMesh()->GetSocketQuaternion(TEXT("hand_r"));
+		const FQuat RelQuat = BoneQuat.Inverse() * DesiredWorld;
+		GunMesh->SetRelativeRotation(RelQuat);
+		GunMesh->SetRelativeLocation(GunHandLoc - RelQuat.RotateVector(GunPivot));
+	}
 
 	// ИИ работает только на сервере; клиенты получают движение по репликации
 	if (!HasAuthority() || Health <= 0.f)
@@ -456,10 +508,12 @@ void ARSBot::ShootAt(AActor* Target)
 
 void ARSBot::MulticastShot_Implementation(FVector Start, FVector End)
 {
-	DrawDebugLine(GetWorld(), Start, End, FColor::Red, false, 0.06f, 0, 0.4f);
-	if (FireSound)
+	const bool bBig = RSWeapons::Get(Weapon).Mesh == ERSMeshKind::Sniper;
+	ARSTracer::Spawn(GetWorld(), Start, End, bBig);
+
+	if (USoundBase* Shot = RSAudio::GetFireSound(Weapon))
 	{
-		UGameplayStatics::PlaySoundAtLocation(this, FireSound, Start, 0.3f);
+		UGameplayStatics::PlaySoundAtLocation(this, Shot, Start, 0.9f);
 	}
 }
 
@@ -478,6 +532,12 @@ void ARSBot::Ragdoll()
 		return;
 	}
 	bRagdolled = true;
+
+	// оружие выпускаем из руки вместе с падением тела
+	if (GunMesh)
+	{
+		GunMesh->SetVisibility(false);
+	}
 
 	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	GetCharacterMovement()->DisableMovement();

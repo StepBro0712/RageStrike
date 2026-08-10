@@ -46,7 +46,9 @@ public:
 	// сервер помечает последний хит хедшотом для killfeed
 	bool bLastHitHeadshot = false;
 
-	// оружие раунда: влияет на урон, темп и killfeed
+	// оружие раунда: влияет на урон, темп и killfeed. Реплицируется, иначе
+	// клиенты не знают, какую модель вешать боту в руку.
+	UPROPERTY(ReplicatedUsing = OnRep_Weapon)
 	ERSWeapon Weapon = ERSWeapon::AK47;
 
 	// флешка ослепляет бота — он перестаёт видеть цели
@@ -65,6 +67,10 @@ public:
 	UPROPERTY(VisibleAnywhere)
 	UCameraComponent* SpectateCam;
 
+	// оружие в руке: у ботов оно тоже должно быть видно
+	UPROPERTY(VisibleAnywhere)
+	class UStaticMeshComponent* GunMesh;
+
 private:
 	UFUNCTION()
 	void OnRep_Health();
@@ -72,7 +78,14 @@ private:
 	UFUNCTION()
 	void OnRep_Team();
 
+	UFUNCTION()
+	void OnRep_Weapon();
+
 	void ApplyTeamVisuals();
+	// подобрать модель под оружие раунда и посадить её в руку
+	void ApplyWeaponVisuals();
+	FVector GunPivot = FVector::ZeroVector;
+	FVector GunHandLoc = FVector::ZeroVector;
 
 	UFUNCTION(NetMulticast, Unreliable)
 	void MulticastShot(FVector Start, FVector End);

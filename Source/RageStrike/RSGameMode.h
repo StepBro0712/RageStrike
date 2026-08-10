@@ -27,10 +27,11 @@ public:
 	int32 BotCount = 5;      // противников
 	int32 TeammateCount = 4; // напарников, чтобы раунд не решался в одиночку
 
-	// правила матча
-	static constexpr int32 RoundsTotal = 24;
-	static constexpr int32 RoundsToWin = 13;
-	static constexpr int32 HalfTimeRound = 12;
+	// правила матча берутся из настроек хоста, значения ниже — запасные
+	int32 RoundsTotal = 24;
+	int32 RoundsToWin = 13;
+	int32 HalfTimeRound = 12;
+
 	static constexpr float RoundSeconds = 120.f;
 	static constexpr float RoundEndSeconds = 5.f;  // показ итога раунда
 	static constexpr float BuySeconds = 15.f;      // закупка перед раундом

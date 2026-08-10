@@ -2,6 +2,7 @@
 #include "RSFireZone.h"
 #include "RSCharacter.h"
 #include "RSBot.h"
+#include "RSAudio.h"
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "GameFramework/ProjectileMovementComponent.h"
@@ -119,6 +120,13 @@ void ARSGrenade::BeginPlay()
 
 void ARSGrenade::OnBounce(const FHitResult& Hit, const FVector& ImpactVelocity)
 {
+	// стук о стену слышно всем: по нему в CS понимают, что летит граната
+	if (USoundBase* Snd = RSAudio::Get(RSAudio::ESound::NadeBounce))
+	{
+		UGameplayStatics::PlaySoundAtLocation(this, Snd, Hit.ImpactPoint,
+			FMath::Clamp(ImpactVelocity.Size() / 900.f, 0.2f, 1.f));
+	}
+
 	// молотов вспыхивает от первого касания пола (не стены)
 	if ((Type == ERSWeapon::Molotov || Type == ERSWeapon::Incendiary) && Hit.ImpactNormal.Z > 0.5f)
 	{
@@ -251,27 +259,32 @@ void ARSGrenade::MulticastDetonate_Implementation(FVector Where)
 {
 	if (Type == ERSWeapon::SmokeGrenade)
 	{
+		if (USoundBase* Snd = RSAudio::Get(RSAudio::ESound::Smoke))
+		{
+			UGameplayStatics::PlaySoundAtLocation(this, Snd, Where, 1.f);
+		}
 		SpawnSmokeCloud(Where);
 		return;
 	}
 
-	if (BlastSound && Type != ERSWeapon::Flashbang)
+	if (Type == ERSWeapon::Flashbang)
 	{
-		UGameplayStatics::PlaySoundAtLocation(this, BlastSound, Where, 1.f, 0.45f);
+		if (USoundBase* Snd = RSAudio::Get(RSAudio::ESound::Flash))
+		{
+			UGameplayStatics::PlaySoundAtLocation(this, Snd, Where, 1.f);
+		}
+		ApplyLocalFlash(Where);
+		return;
 	}
 
+	// HE, молотов и зажигалка — взрыв
+	if (USoundBase* Snd = RSAudio::Get(RSAudio::ESound::Explode))
+	{
+		UGameplayStatics::PlaySoundAtLocation(this, Snd, Where, 1.f);
+	}
 	if (Type == ERSWeapon::HEGrenade)
 	{
 		DrawDebugSphere(GetWorld(), Where, 220.f, 16, FColor::Orange, false, 0.25f, 0, 3.f);
-	}
-
-	if (Type == ERSWeapon::Flashbang)
-	{
-		if (BlastSound)
-		{
-			UGameplayStatics::PlaySoundAtLocation(this, BlastSound, Where, 1.f, 1.8f);
-		}
-		ApplyLocalFlash(Where);
 	}
 }
 
