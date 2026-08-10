@@ -34,11 +34,27 @@ public:
 	// чувствительность мыши (читается персонажем)
 	float MouseSens = 1.f;
 
+	// ник игрока: показывается в таблице и killfeed, хранится в конфиге
+	FString PlayerNick;
+	void SetPlayerNick(const FString& NewNick);
+
 	bool IsStartupMenu() const { return bStartupMenu; }
+	// HUD прячется, пока открыто меню — иначе радар и патроны лезут поверх
+	bool IsMenuOpen() const { return bMenuOpen; }
 
 	void SaveUserFloat(const TCHAR* Key, float Value);
 
 private:
+	// облётная камера меню и то, куда вернуть взгляд при закрытии
+	void ShowMenuCamera();
+	void RestoreGameView();
+
+	UPROPERTY()
+	TObjectPtr<class ARSMenuCamera> MenuCamera = nullptr;
+
+	UPROPERTY()
+	TObjectPtr<AActor> ViewTargetBeforeMenu = nullptr;
+
 	TSharedPtr<SRSMenu> MenuWidget;
 	TSharedPtr<SWidget> MenuContainer;
 	bool bMenuOpen = false;

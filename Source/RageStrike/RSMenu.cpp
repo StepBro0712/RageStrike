@@ -1,19 +1,35 @@
 #include "RSMenu.h"
 #include "RSPlayerController.h"
 #include "RSMaps.h"
+#include "RSWeaponData.h"
 #include "GameFramework/GameUserSettings.h"
 #include "Engine/Engine.h"
 #include "Misc/App.h"
+#include "HAL/PlatformProcess.h"
 #include "Styling/CoreStyle.h"
 #include "Widgets/SBoxPanel.h"
+#include "Widgets/SOverlay.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Layout/SBorder.h"
+#include "Widgets/Layout/SScrollBox.h"
+#include "Widgets/Layout/SWidgetSwitcher.h"
 #include "Widgets/Text/STextBlock.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SSlider.h"
 #include "Widgets/Input/SEditableTextBox.h"
 
 static const FIntPoint GResolutions[] = { {1280, 720}, {1600, 900}, {1920, 1080}, {2560, 1440} };
+
+namespace
+{
+	const FLinearColor MenuBarBg(0.f, 0.f, 0.f, 0.62f);
+	const FLinearColor MenuPanelBg(0.02f, 0.03f, 0.05f, 0.82f);
+	const FLinearColor MenuAccent(0.98f, 0.68f, 0.15f);   // жёлтый CS2
+	const FLinearColor MenuGreen(0.20f, 0.85f, 0.35f);
+	const FLinearColor MenuDim(0.92f, 0.94f, 0.96f, 0.55f);
+	const FLinearColor MenuCT(0.35f, 0.65f, 1.f);
+	const FLinearColor MenuT(1.f, 0.6f, 0.2f);
+}
 
 static UGameUserSettings* GetUS()
 {
@@ -80,7 +96,7 @@ void SRSMenu::CycleMap(int32 Dir)
 
 FText SRSMenu::GetQualityText() const
 {
-	static const TCHAR* Names[] = { TEXT("Low"), TEXT("Medium"), TEXT("High"), TEXT("Epic") };
+	static const TCHAR* Names[] = { TEXT("Низкое"), TEXT("Среднее"), TEXT("Высокое"), TEXT("Эпик") };
 	int32 Q = 2;
 	if (UGameUserSettings* S = GetUS())
 	{
@@ -106,9 +122,9 @@ FText SRSMenu::GetWindowModeText() const
 	{
 		switch (S->GetFullscreenMode())
 		{
-		case EWindowMode::Fullscreen:         return FText::FromString(TEXT("Fullscreen"));
-		case EWindowMode::WindowedFullscreen: return FText::FromString(TEXT("Borderless"));
-		default:                              return FText::FromString(TEXT("Windowed"));
+		case EWindowMode::Fullscreen:         return FText::FromString(TEXT("Полный экран"));
+		case EWindowMode::WindowedFullscreen: return FText::FromString(TEXT("Без рамки"));
+		default:                              return FText::FromString(TEXT("В окне"));
 		}
 	}
 	return FText::GetEmpty();
@@ -164,7 +180,7 @@ void SRSMenu::CycleResolution(int32 Dir)
 FText SRSMenu::GetVSyncText() const
 {
 	UGameUserSettings* S = GetUS();
-	return FText::FromString(S && S->IsVSyncEnabled() ? TEXT("On") : TEXT("Off"));
+	return FText::FromString(S && S->IsVSyncEnabled() ? TEXT("Вкл") : TEXT("Выкл"));
 }
 
 void SRSMenu::ToggleVSync()
@@ -177,208 +193,428 @@ void SRSMenu::ToggleVSync()
 	}
 }
 
+TSharedRef<SWidget> SRSMenu::MakeTab(const FText& Label, int32 TabIndex)
+{
+	return SNew(SButton)
+		.ButtonStyle(&FCoreStyle::Get().GetWidgetStyle<FButtonStyle>("NoBorder"))
+		.ContentPadding(FMargin(18.f, 12.f))
+		.OnClicked_Lambda([this, TabIndex]()
+		{
+			ActiveTab = TabIndex;
+			return FReply::Handled();
+		})
+		[
+			SNew(SVerticalBox)
+			+ SVerticalBox::Slot().AutoHeight()
+			[
+				SNew(STextBlock)
+				.Font(FCoreStyle::GetDefaultFontStyle("Bold", 17))
+				.ColorAndOpacity_Lambda([this, TabIndex]()
+				{
+					return ActiveTab == TabIndex ? FSlateColor(FLinearColor::White) : FSlateColor(MenuDim);
+				})
+				.Text(Label)
+			]
+			// полоска под активной вкладкой, как в CS2
+			+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f, 0.f, 0.f)
+			[
+				SNew(SBox).HeightOverride(3.f)
+				[
+					SNew(SBorder)
+					.BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush"))
+					.BorderBackgroundColor_Lambda([this, TabIndex]()
+					{
+						return ActiveTab == TabIndex ? MenuAccent : FLinearColor(0.f, 0.f, 0.f, 0.f);
+					})
+				]
+			]
+		];
+}
+
+TSharedRef<SWidget> SRSMenu::MakeTopBar()
+{
+	return SNew(SBorder)
+		.BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush"))
+		.BorderBackgroundColor(MenuBarBg)
+		.Padding(FMargin(16.f, 0.f))
+		[
+			SNew(SHorizontalBox)
+
+			// выход слева, как кнопка питания в CS2
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+			[
+				SNew(SButton)
+				.ButtonStyle(&FCoreStyle::Get().GetWidgetStyle<FButtonStyle>("NoBorder"))
+				.ContentPadding(FMargin(10.f, 12.f))
+				.OnClicked_Lambda([this]()
+				{
+					if (PC.IsValid()) { PC->QuitGame(); }
+					return FReply::Handled();
+				})
+				[
+					SNew(STextBlock)
+					.Font(FCoreStyle::GetDefaultFontStyle("Bold", 15))
+					.ColorAndOpacity(FLinearColor(1.f, 0.35f, 0.3f))
+					.Text(FText::FromString(TEXT("ВЫХОД")))
+				]
+			]
+
+			// вкладки по центру
+			+ SHorizontalBox::Slot().FillWidth(1.f).HAlign(HAlign_Center)
+			[
+				SNew(SHorizontalBox)
+				+ SHorizontalBox::Slot().AutoWidth()[ MakeTab(FText::FromString(TEXT("ИНВЕНТАРЬ")), 4) ]
+				+ SHorizontalBox::Slot().AutoWidth()[ MakeTab(FText::FromString(TEXT("СНАРЯЖЕНИЕ")), 2) ]
+				+ SHorizontalBox::Slot().AutoWidth()[ MakeTab(FText::FromString(TEXT("ИГРАТЬ")), 0) ]
+				+ SHorizontalBox::Slot().AutoWidth()[ MakeTab(FText::FromString(TEXT("НОВОСТИ")), 3) ]
+				+ SHorizontalBox::Slot().AutoWidth()[ MakeTab(FText::FromString(TEXT("НАСТРОЙКИ")), 1) ]
+			]
+		];
+}
+
+TSharedRef<SWidget> SRSMenu::MakePlayPanel()
+{
+	const bool bStartup = PC.IsValid() && PC->IsStartupMenu();
+
+	return SNew(SVerticalBox)
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 14.f)
+		[
+			MakeCycleRow(FText::FromString(TEXT("Карта")),
+				TAttribute<FText>::CreateSP(this, &SRSMenu::GetMapText),
+				[this]() { CycleMap(-1); }, [this]() { CycleMap(1); })
+		]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 4.f)
+		[
+			SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Regular", 13))
+			.ColorAndOpacity(MenuDim)
+			.Text(FText::FromString(TEXT("Сторона")))
+		]
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f, 0.f, 14.f)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 4.f, 0.f)
+			[
+				SNew(SButton)
+				.HAlign(HAlign_Center).ContentPadding(FMargin(0.f, 8.f))
+				.OnClicked_Lambda([this]()
+				{
+					if (PC.IsValid()) { PC->SelectTeam(true); }
+					return FReply::Handled();
+				})
+				[
+					SNew(STextBlock)
+					.Font(FCoreStyle::GetDefaultFontStyle("Bold", 14))
+					.ColorAndOpacity_Lambda([this]()
+					{
+						return (PC.IsValid() && PC->IsTeamCT())
+							? FSlateColor(MenuCT) : FSlateColor(FLinearColor(0.6f, 0.6f, 0.6f));
+					})
+					.Text(FText::FromString(TEXT("Контр-террористы")))
+				]
+			]
+			+ SHorizontalBox::Slot().FillWidth(1.f).Padding(4.f, 0.f, 0.f, 0.f)
+			[
+				SNew(SButton)
+				.HAlign(HAlign_Center).ContentPadding(FMargin(0.f, 8.f))
+				.OnClicked_Lambda([this]()
+				{
+					if (PC.IsValid()) { PC->SelectTeam(false); }
+					return FReply::Handled();
+				})
+				[
+					SNew(STextBlock)
+					.Font(FCoreStyle::GetDefaultFontStyle("Bold", 14))
+					.ColorAndOpacity_Lambda([this]()
+					{
+						return (PC.IsValid() && !PC->IsTeamCT())
+							? FSlateColor(MenuT) : FSlateColor(FLinearColor(0.6f, 0.6f, 0.6f));
+					})
+					.Text(FText::FromString(TEXT("Террористы")))
+				]
+			]
+		]
+
+		// большая жёлтая кнопка, как в CS2. Тонировать штатный тёмный брашик
+		// бесполезно — жёлтый выходит оливковым, поэтому фон рисуем бордером,
+		// а сверху кладём кнопку без рамки.
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)
+		[
+			SNew(SBorder)
+			.BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush"))
+			.BorderBackgroundColor(MenuAccent)
+			.Padding(0.f)
+			[
+				SNew(SButton)
+				.ButtonStyle(&FCoreStyle::Get().GetWidgetStyle<FButtonStyle>("NoBorder"))
+				.HAlign(HAlign_Center)
+				.ContentPadding(FMargin(0.f, 14.f))
+				.OnClicked_Lambda([this]()
+				{
+					if (PC.IsValid()) { PC->CloseMenu(); }
+					return FReply::Handled();
+				})
+				[
+					SNew(STextBlock)
+					.Font(FCoreStyle::GetDefaultFontStyle("Bold", 20))
+					.ColorAndOpacity(FLinearColor(0.05f, 0.05f, 0.05f))
+					.Text(FText::FromString(bStartup ? TEXT("ИГРАТЬ") : TEXT("ПРОДОЛЖИТЬ")))
+				]
+			]
+		]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)
+		[
+			MakeButton(FText::FromString(TEXT("Новый матч")), [this]()
+			{
+				if (PC.IsValid()) { PC->ReloadLevel(); }
+			})
+		]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 14.f, 0.f, 4.f)
+		[
+			MakeButton(FText::FromString(TEXT("Создать лобби (LAN)")), [this]()
+			{
+				if (PC.IsValid()) { PC->HostGame(); }
+			})
+		]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 6.f, 0.f)
+			[
+				SAssignNew(IPBox, SEditableTextBox)
+				.Font(FCoreStyle::GetDefaultFontStyle("Regular", 13))
+				.Text(FText::FromString(TEXT("127.0.0.1")))
+			]
+			+ SHorizontalBox::Slot().AutoWidth()
+			[
+				MakeButton(FText::FromString(TEXT("Подключиться")), [this]()
+				{
+					if (PC.IsValid() && IPBox.IsValid())
+					{
+						PC->JoinGame(IPBox->GetText().ToString());
+					}
+				})
+			]
+		];
+}
+
+TSharedRef<SWidget> SRSMenu::MakeSettingsPanel()
+{
+	return SNew(SVerticalBox)
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)
+		[
+			MakeCycleRow(FText::FromString(TEXT("Качество графики")),
+				TAttribute<FText>::CreateSP(this, &SRSMenu::GetQualityText),
+				[this]() { CycleQuality(-1); }, [this]() { CycleQuality(1); })
+		]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)
+		[
+			MakeCycleRow(FText::FromString(TEXT("Режим окна")),
+				TAttribute<FText>::CreateSP(this, &SRSMenu::GetWindowModeText),
+				[this]() { CycleWindowMode(); }, [this]() { CycleWindowMode(); })
+		]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)
+		[
+			MakeCycleRow(FText::FromString(TEXT("Разрешение")),
+				TAttribute<FText>::CreateSP(this, &SRSMenu::GetResolutionText),
+				[this]() { CycleResolution(-1); }, [this]() { CycleResolution(1); })
+		]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)
+		[
+			MakeCycleRow(FText::FromString(TEXT("Верт. синхронизация")),
+				TAttribute<FText>::CreateSP(this, &SRSMenu::GetVSyncText),
+				[this]() { ToggleVSync(); }, [this]() { ToggleVSync(); })
+		]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 10.f, 0.f, 2.f)
+		[
+			SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Regular", 13))
+			.Text(FText::FromString(TEXT("Громкость")))
+		]
+		+ SVerticalBox::Slot().AutoHeight()
+		[
+			SNew(SSlider)
+			.Value_Lambda([]() { return FApp::GetVolumeMultiplier(); })
+			.OnValueChanged_Lambda([this](float V)
+			{
+				FApp::SetVolumeMultiplier(V);
+				if (PC.IsValid()) { PC->SaveUserFloat(TEXT("Volume"), V); }
+			})
+		]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 8.f, 0.f, 2.f)
+		[
+			SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Regular", 13))
+			.Text(FText::FromString(TEXT("Чувствительность мыши")))
+		]
+		+ SVerticalBox::Slot().AutoHeight()
+		[
+			SNew(SSlider)
+			.MinValue(0.1f).MaxValue(3.f)
+			.Value_Lambda([this]() { return PC.IsValid() ? PC->MouseSens : 1.f; })
+			.OnValueChanged_Lambda([this](float V)
+			{
+				if (PC.IsValid())
+				{
+					PC->MouseSens = V;
+					PC->SaveUserFloat(TEXT("MouseSens"), V);
+				}
+			})
+		];
+}
+
+TSharedRef<SWidget> SRSMenu::MakeArsenalPanel()
+{
+	TSharedRef<SScrollBox> List = SNew(SScrollBox);
+
+	List->AddSlot().Padding(0.f, 0.f, 0.f, 8.f)
+	[
+		SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Bold", 16))
+		.ColorAndOpacity(MenuAccent)
+		.Text(FText::FromString(TEXT("Арсенал — цены и урон")))
+	];
+
+	for (int32 i = 0; i < RSWeapons::Count; i++)
+	{
+		const FRSWeaponDef& Def = RSWeapons::Get((ERSWeapon)i);
+		if (Def.Slot == ERSSlot::Knife)
+		{
+			continue;
+		}
+		const FString Line = FString::Printf(TEXT("%-12s  $%-5d  урон %d%s"),
+			Def.Name, Def.Price, FMath::RoundToInt(Def.BodyDamage),
+			Def.Pellets > 1 ? *FString::Printf(TEXT(" x%d дроби"), Def.Pellets) : TEXT(""));
+		List->AddSlot().Padding(0.f, 2.f)
+		[
+			SNew(STextBlock)
+			.Font(FCoreStyle::GetDefaultFontStyle("Mono", 12))
+			.ColorAndOpacity(FLinearColor::White)
+			.Text(FText::FromString(Line))
+		];
+	}
+
+	return SNew(SBox).MaxDesiredHeight(460.f)[ List ];
+}
+
+TSharedRef<SWidget> SRSMenu::MakeNewsPanel()
+{
+	return SNew(SVerticalBox)
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 8.f)
+		[
+			SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Bold", 16))
+			.ColorAndOpacity(MenuAccent)
+			.Text(FText::FromString(TEXT("Обновление v0.1")))
+		]
+		+ SVerticalBox::Slot().AutoHeight()
+		[
+			SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Regular", 13))
+			.AutoWrapText(true)
+			.Text(FText::FromString(TEXT(
+				"— Карта Mirage\n"
+				"— Весь арсенал CS: 20 стволов с ценами и паттернами отдачи\n"
+				"— Гранаты: HE, флешка, дым, молотов\n"
+				"— Броня и шлем, экономика с лосс-бонусами\n"
+				"— Killfeed, радар, HUD в стиле CS2\n"
+				"— Rage-читы F1–F7 как всегда бесплатно :)")))
+		];
+}
+
+TSharedRef<SWidget> SRSMenu::MakePlaceholderPanel()
+{
+	return SNew(SBox).HAlign(HAlign_Center).VAlign(VAlign_Center).MinDesiredHeight(200.f)
+	[
+		SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Bold", 18))
+		.ColorAndOpacity(MenuDim)
+		.Text(FText::FromString(TEXT("Скоро™")))
+	];
+}
+
+TSharedRef<SWidget> SRSMenu::MakePlayerCard()
+{
+	// ник игрока: сохраняется в конфиг и уходит на сервер для таблицы и killfeed
+	return SNew(SBorder)
+		.BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush"))
+		.BorderBackgroundColor(MenuPanelBg)
+		.Padding(FMargin(18.f, 10.f))
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0.f, 0.f, 10.f, 0.f)
+			[
+				SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Regular", 13))
+				.ColorAndOpacity(MenuDim)
+				.Text(FText::FromString(TEXT("Ник")))
+			]
+			+ SHorizontalBox::Slot().AutoWidth()
+			[
+				SNew(SBox).WidthOverride(220.f)
+				[
+					SAssignNew(NickBox, SEditableTextBox)
+					.Font(FCoreStyle::GetDefaultFontStyle("Bold", 14))
+					.Text(FText::FromString(PC.IsValid() ? PC->PlayerNick : FString()))
+					.OnTextCommitted_Lambda([this](const FText& NewText, ETextCommit::Type)
+					{
+						if (PC.IsValid()) { PC->SetPlayerNick(NewText.ToString()); }
+					})
+				]
+			]
+		];
+}
+
 void SRSMenu::Construct(const FArguments& InArgs)
 {
 	PC = InArgs._OwnerPC;
 
-	const FSlateFontInfo TitleFont = FCoreStyle::GetDefaultFontStyle("Bold", 30);
-	const FSlateFontInfo LabelFont = FCoreStyle::GetDefaultFontStyle("Regular", 13);
-
 	ChildSlot
 	[
-		SNew(SBorder)
-		.BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush"))
-		.BorderBackgroundColor(FLinearColor(0.f, 0.f, 0.f, 0.75f))
-		.HAlign(HAlign_Center)
-		.VAlign(VAlign_Center)
+		SNew(SOverlay)
+
+		// лёгкое затемнение — сцена с картой остаётся видна, как в CS2
+		+ SOverlay::Slot()
 		[
-			SNew(SBox).WidthOverride(480.f)
+			SNew(SBorder)
+			.BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush"))
+			.BorderBackgroundColor(FLinearColor(0.f, 0.f, 0.f, 0.35f))
+		]
+
+		// верхняя панель вкладок
+		+ SOverlay::Slot().VAlign(VAlign_Top)
+		[
+			MakeTopBar()
+		]
+
+		// контент активной вкладки
+		+ SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Center)
+		[
+			SNew(SBox).WidthOverride(540.f)
 			[
-				SNew(SVerticalBox)
-
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 18.f).HAlign(HAlign_Center)
+				SNew(SBorder)
+				.BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush"))
+				.BorderBackgroundColor(MenuPanelBg)
+				.Padding(FMargin(28.f, 24.f))
 				[
-					SNew(STextBlock).Font(TitleFont).ColorAndOpacity(FLinearColor(1.f, 0.25f, 0.25f))
-					.Text(FText::FromString(TEXT("RAGESTRIKE")))
-				]
-
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)
-				[
-					MakeButton(
-						FText::FromString(PC.IsValid() && PC->IsStartupMenu()
-							? TEXT("Одиночная игра")
-							: TEXT("Продолжить  (Esc)")),
-						[this]()
-						{
-							if (PC.IsValid()) { PC->CloseMenu(); }
-						})
-				]
-
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)
-				[
-					MakeButton(FText::FromString(TEXT("Создать лобби (LAN)")), [this]()
-					{
-						if (PC.IsValid()) { PC->HostGame(); }
-					})
-				]
-
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)
-				[
-					SNew(SHorizontalBox)
-					+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 6.f, 0.f)
-					[
-						SAssignNew(IPBox, SEditableTextBox)
-						.Font(LabelFont)
-						.Text(FText::FromString(TEXT("127.0.0.1")))
-					]
-					+ SHorizontalBox::Slot().AutoWidth()
-					[
-						MakeButton(FText::FromString(TEXT("Подключиться")), [this]()
-						{
-							if (PC.IsValid() && IPBox.IsValid())
-							{
-								PC->JoinGame(IPBox->GetText().ToString());
-							}
-						})
-					]
-				]
-
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 10.f, 0.f, 4.f)
-				[
-					MakeCycleRow(FText::FromString(TEXT("Карта")),
-						TAttribute<FText>::CreateSP(this, &SRSMenu::GetMapText),
-						[this]() { CycleMap(-1); }, [this]() { CycleMap(1); })
-				]
-
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 12.f, 0.f, 2.f)
-				[
-					SNew(STextBlock).Font(LabelFont).Text(FText::FromString(TEXT("Команда")))
-				]
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
-				[
-					SNew(SHorizontalBox)
-					+ SHorizontalBox::Slot().FillWidth(1.f).Padding(0.f, 0.f, 4.f, 0.f)
-					[
-						SNew(SButton)
-						.HAlign(HAlign_Center).ContentPadding(FMargin(0.f, 8.f))
-						.OnClicked_Lambda([this]()
-						{
-							if (PC.IsValid()) { PC->SelectTeam(true); }
-							return FReply::Handled();
-						})
-						[
-							SNew(STextBlock)
-							.Font(FCoreStyle::GetDefaultFontStyle("Bold", 14))
-							.ColorAndOpacity_Lambda([this]()
-							{
-								return (PC.IsValid() && PC->IsTeamCT())
-									? FSlateColor(FLinearColor(0.35f, 0.65f, 1.f))
-									: FSlateColor(FLinearColor(0.6f, 0.6f, 0.6f));
-							})
-							.Text(FText::FromString(TEXT("Контр-террористы")))
-						]
-					]
-					+ SHorizontalBox::Slot().FillWidth(1.f).Padding(4.f, 0.f, 0.f, 0.f)
-					[
-						SNew(SButton)
-						.HAlign(HAlign_Center).ContentPadding(FMargin(0.f, 8.f))
-						.OnClicked_Lambda([this]()
-						{
-							if (PC.IsValid()) { PC->SelectTeam(false); }
-							return FReply::Handled();
-						})
-						[
-							SNew(STextBlock)
-							.Font(FCoreStyle::GetDefaultFontStyle("Bold", 14))
-							.ColorAndOpacity_Lambda([this]()
-							{
-								return (PC.IsValid() && !PC->IsTeamCT())
-									? FSlateColor(FLinearColor(1.f, 0.6f, 0.2f))
-									: FSlateColor(FLinearColor(0.6f, 0.6f, 0.6f));
-							})
-							.Text(FText::FromString(TEXT("Террористы")))
-						]
-					]
-				]
-
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 10.f, 0.f, 4.f)
-				[
-					MakeCycleRow(FText::FromString(TEXT("Graphics quality")),
-						TAttribute<FText>::CreateSP(this, &SRSMenu::GetQualityText),
-						[this]() { CycleQuality(-1); }, [this]() { CycleQuality(1); })
-				]
-
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)
-				[
-					MakeCycleRow(FText::FromString(TEXT("Window mode")),
-						TAttribute<FText>::CreateSP(this, &SRSMenu::GetWindowModeText),
-						[this]() { CycleWindowMode(); }, [this]() { CycleWindowMode(); })
-				]
-
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)
-				[
-					MakeCycleRow(FText::FromString(TEXT("Resolution")),
-						TAttribute<FText>::CreateSP(this, &SRSMenu::GetResolutionText),
-						[this]() { CycleResolution(-1); }, [this]() { CycleResolution(1); })
-				]
-
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)
-				[
-					MakeCycleRow(FText::FromString(TEXT("VSync")),
-						TAttribute<FText>::CreateSP(this, &SRSMenu::GetVSyncText),
-						[this]() { ToggleVSync(); }, [this]() { ToggleVSync(); })
-				]
-
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 10.f, 0.f, 2.f)
-				[
-					SNew(STextBlock).Font(LabelFont).Text(FText::FromString(TEXT("Sound volume")))
-				]
-				+ SVerticalBox::Slot().AutoHeight()
-				[
-					SNew(SSlider)
-					.Value_Lambda([]() { return FApp::GetVolumeMultiplier(); })
-					.OnValueChanged_Lambda([this](float V)
-					{
-						FApp::SetVolumeMultiplier(V);
-						if (PC.IsValid()) { PC->SaveUserFloat(TEXT("Volume"), V); }
-					})
-				]
-
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 8.f, 0.f, 2.f)
-				[
-					SNew(STextBlock).Font(LabelFont).Text(FText::FromString(TEXT("Mouse sensitivity")))
-				]
-				+ SVerticalBox::Slot().AutoHeight()
-				[
-					SNew(SSlider)
-					.MinValue(0.1f).MaxValue(3.f)
-					.Value_Lambda([this]() { return PC.IsValid() ? PC->MouseSens : 1.f; })
-					.OnValueChanged_Lambda([this](float V)
-					{
-						if (PC.IsValid())
-						{
-							PC->MouseSens = V;
-							PC->SaveUserFloat(TEXT("MouseSens"), V);
-						}
-					})
-				]
-
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 14.f, 0.f, 4.f)
-				[
-					MakeButton(FText::FromString(TEXT("Новый матч")), [this]()
-					{
-						if (PC.IsValid()) { PC->ReloadLevel(); }
-					})
-				]
-
-				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f, 0.f, 0.f)
-				[
-					MakeButton(FText::FromString(TEXT("Выход из игры")), [this]()
-					{
-						if (PC.IsValid()) { PC->QuitGame(); }
-					})
+					SNew(SWidgetSwitcher)
+					.WidgetIndex_Lambda([this]() { return ActiveTab; })
+					+ SWidgetSwitcher::Slot()[ MakePlayPanel() ]
+					+ SWidgetSwitcher::Slot()[ MakeSettingsPanel() ]
+					+ SWidgetSwitcher::Slot()[ MakeArsenalPanel() ]
+					+ SWidgetSwitcher::Slot()[ MakeNewsPanel() ]
+					+ SWidgetSwitcher::Slot()[ MakePlaceholderPanel() ]
 				]
 			]
+		]
+
+		// карточка игрока внизу по центру
+		+ SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Bottom).Padding(0.f, 0.f, 0.f, 34.f)
+		[
+			MakePlayerCard()
 		]
 	];
 }

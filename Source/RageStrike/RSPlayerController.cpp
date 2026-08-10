@@ -1,6 +1,7 @@
 #include "RSPlayerController.h"
 #include "RSMenu.h"
 #include "RSCharacter.h"
+#include "RSMenuCamera.h"
 #include "Engine/Engine.h"
 #include "Engine/GameViewportClient.h"
 #include "Widgets/SWeakWidget.h"
@@ -9,6 +10,7 @@
 #include "Components/InputComponent.h"
 #include "InputCoreTypes.h"
 #include "Kismet/GameplayStatics.h"
+#include "HAL/PlatformProcess.h"
 
 namespace
 {
@@ -30,6 +32,14 @@ void ARSPlayerController::BeginPlay()
 	{
 		FApp::SetVolumeMultiplier(FMath::Clamp(Value, 0.f, 1.f));
 	}
+
+	// ник: сохранённый или имя пользователя Windows как заготовка
+	FString Nick;
+	if (!GConfig->GetString(TEXT("RageStrike"), TEXT("Nick"), Nick, GGameUserSettingsIni) || Nick.IsEmpty())
+	{
+		Nick = FPlatformProcess::UserName();
+	}
+	SetPlayerNick(Nick);
 
 	// -nomenu пропускает стартовое меню: с ним игра стоит на паузе,
 	// и автоматические проверки не доходят до матча
@@ -58,6 +68,25 @@ void ARSPlayerController::SaveUserFloat(const TCHAR* Key, float Value)
 {
 	GConfig->SetFloat(TEXT("RageStrike"), Key, Value, GGameUserSettingsIni);
 	GConfig->Flush(false, GGameUserSettingsIni);
+}
+
+void ARSPlayerController::SetPlayerNick(const FString& NewNick)
+{
+	FString Clean = NewNick.TrimStartAndEnd().Left(16);
+	if (Clean.IsEmpty())
+	{
+		Clean = TEXT("Игрок");
+	}
+	PlayerNick = Clean;
+
+	GConfig->SetString(TEXT("RageStrike"), TEXT("Nick"), *PlayerNick, GGameUserSettingsIni);
+	GConfig->Flush(false, GGameUserSettingsIni);
+
+	// пешка везёт ник на сервер: killfeed и таблица собираются там
+	if (ARSCharacter* RSPawn = Cast<ARSCharacter>(GetPawn()))
+	{
+		RSPawn->ApplyNick(PlayerNick);
+	}
 }
 
 void ARSPlayerController::ToggleMenu()
@@ -95,6 +124,8 @@ void ARSPlayerController::OpenMenu(bool bStartup)
 	Mode.SetHideCursorDuringCapture(false);
 	SetInputMode(Mode);
 
+	ShowMenuCamera();
+
 	// в одиночной игре ставим паузу, чтобы боты не расстреляли в меню
 	if (GetNetMode() == NM_Standalone)
 	{
@@ -102,6 +133,48 @@ void ARSPlayerController::OpenMenu(bool bStartup)
 	}
 
 	bMenuOpen = true;
+}
+
+void ARSPlayerController::ShowMenuCamera()
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	if (!IsValid(MenuCamera))
+	{
+		FActorSpawnParameters SP;
+		SP.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		SP.ObjectFlags |= RF_Transient;
+		MenuCamera = GetWorld()->SpawnActor<ARSMenuCamera>(
+			ARSMenuCamera::StaticClass(), FVector::ZeroVector, FRotator::ZeroRotator, SP);
+	}
+	if (!IsValid(MenuCamera))
+	{
+		return;
+	}
+
+	// запоминаем, куда смотрели: живой игрок, наблюдаемый союзник или своё тело
+	AActor* Current = GetViewTarget();
+	if (Current != MenuCamera)
+	{
+		ViewTargetBeforeMenu = Current;
+	}
+	SetViewTargetWithBlend(MenuCamera, 0.5f);
+}
+
+void ARSPlayerController::RestoreGameView()
+{
+	if (GetViewTarget() != MenuCamera)
+	{
+		return;
+	}
+	AActor* Back = IsValid(ViewTargetBeforeMenu) ? ViewTargetBeforeMenu.Get() : Cast<AActor>(GetPawn());
+	if (Back)
+	{
+		SetViewTargetWithBlend(Back, 0.35f);
+	}
 }
 
 void ARSPlayerController::CloseMenu()
@@ -115,6 +188,8 @@ void ARSPlayerController::CloseMenu()
 	{
 		UGameplayStatics::SetGamePaused(this, false);
 	}
+
+	RestoreGameView();
 
 	bShowMouseCursor = false;
 	SetInputMode(FInputModeGameOnly());

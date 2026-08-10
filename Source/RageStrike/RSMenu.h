@@ -6,7 +6,8 @@
 class ARSPlayerController;
 class SEditableTextBox;
 
-// Игровое меню (Esc): настройки графики/звука/мыши, LAN хост/подключение.
+// Меню в стиле CS2: верхняя панель вкладок, контент по вкладкам,
+// карточка игрока снизу. Работает и как стартовое, и как пауза (Esc).
 class SRSMenu : public SCompoundWidget
 {
 public:
@@ -19,6 +20,19 @@ public:
 private:
 	TWeakObjectPtr<ARSPlayerController> PC;
 	TSharedPtr<SEditableTextBox> IPBox;
+	TSharedPtr<SEditableTextBox> NickBox;
+
+	// вкладки: 0 играть, 1 настройки, 2 снаряжение, 3 новости, 4 заглушка
+	int32 ActiveTab = 0;
+
+	TSharedRef<SWidget> MakeTopBar();
+	TSharedRef<SWidget> MakeTab(const FText& Label, int32 TabIndex);
+	TSharedRef<SWidget> MakePlayPanel();
+	TSharedRef<SWidget> MakeSettingsPanel();
+	TSharedRef<SWidget> MakeArsenalPanel();
+	TSharedRef<SWidget> MakeNewsPanel();
+	TSharedRef<SWidget> MakePlaceholderPanel();
+	TSharedRef<SWidget> MakePlayerCard();
 
 	// helpers
 	FText GetMapText() const;

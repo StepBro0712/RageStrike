@@ -63,6 +63,15 @@ public:
 	UPROPERTY(Replicated)
 	bool bAlive = true;
 
+	// ник владельца: задаётся из меню, сервер раздаёт его всем
+	UPROPERTY(Replicated)
+	FString Nick;
+
+	void ApplyNick(const FString& NewNick);
+
+	UFUNCTION(Server, Reliable)
+	void ServerSetNick(const FString& NewNick);
+
 	// экономика
 	UPROPERTY(Replicated)
 	int32 Money = 800;

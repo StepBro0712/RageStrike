@@ -11,6 +11,8 @@
 import os
 import unreal
 
+IMPORT_ROOT = r"C:\Dev\RageStrike\ImportSource"
+
 WEAPONS = [
     {
         "name": "Sniper",
@@ -23,6 +25,25 @@ WEAPONS = [
         "textures": r"C:\Dev\RageStrike\ImportSource\Knife\MeleeWeaponsPack#1\Combat_Knife",
     },
 ]
+
+# Автосканирование: ищем все дополнительные .fbx в ImportSource
+if os.path.exists(IMPORT_ROOT):
+    known_paths = {w["fbx"].lower() for w in WEAPONS}
+    for root, dirs, files in os.walk(IMPORT_ROOT):
+        # пропускаем дефолтные системные папки карт и персонажей
+        if "dust 2" in root.lower() or "character_" in root.lower():
+            continue
+        for f in files:
+            if f.lower().endswith(".fbx"):
+                full_path = os.path.join(root, f)
+                if full_path.lower() not in known_paths:
+                    wname = os.path.splitext(f)[0]
+                    WEAPONS.append({
+                        "name": wname,
+                        "fbx": full_path,
+                        "textures": root
+                    })
+                    known_paths.add(full_path.lower())
 
 asset_tools = unreal.AssetToolsHelpers.get_asset_tools()
 mat_lib = unreal.MaterialEditingLibrary
@@ -127,36 +148,47 @@ def process(weapon):
         unreal.EditorAssetLibrary.save_loaded_asset(tex)
 
     # материал
-    mat = asset_tools.create_asset("M_" + name, base + "/Materials",
-                                   unreal.Material, unreal.MaterialFactoryNew())
+    mat_path = base + "/Materials/M_" + name
+    mat = unreal.load_asset(mat_path)
+    if mat is None:
+        mat = asset_tools.create_asset("M_" + name, base + "/Materials",
+                                       unreal.Material, unreal.MaterialFactoryNew())
 
-    def add_sample(tex, x, y):
-        node = mat_lib.create_material_expression(mat, unreal.MaterialExpressionTextureSample, x, y)
-        node.texture = tex
-        return node
+        def add_sample(tex, x, y):
+            if tex is None:
+                return None
+            node = mat_lib.create_material_expression(mat, unreal.MaterialExpressionTextureSample, x, y)
+            if node:
+                node.texture = tex
+            return node
 
-    if textures.get("color"):
-        node = add_sample(textures["color"], -400, -300)
-        mat_lib.connect_material_property(node, "RGB", unreal.MaterialProperty.MP_BASE_COLOR)
-    if textures.get("normal"):
-        node = add_sample(textures["normal"], -400, 0)
-        mat_lib.connect_material_property(node, "RGB", unreal.MaterialProperty.MP_NORMAL)
-    if textures.get("maor"):
-        # упаковка MAOR: R - metallic, G - ambient occlusion, B - roughness
-        node = add_sample(textures["maor"], -400, 300)
-        mat_lib.connect_material_property(node, "R", unreal.MaterialProperty.MP_METALLIC)
-        mat_lib.connect_material_property(node, "G", unreal.MaterialProperty.MP_AMBIENT_OCCLUSION)
-        mat_lib.connect_material_property(node, "B", unreal.MaterialProperty.MP_ROUGHNESS)
-    else:
-        if textures.get("roughness"):
-            node = add_sample(textures["roughness"], -400, 300)
-            mat_lib.connect_material_property(node, "R", unreal.MaterialProperty.MP_ROUGHNESS)
-        if textures.get("metallic"):
-            node = add_sample(textures["metallic"], -400, 600)
-            mat_lib.connect_material_property(node, "R", unreal.MaterialProperty.MP_METALLIC)
+        if textures.get("color"):
+            node = add_sample(textures["color"], -400, -300)
+            if node:
+                mat_lib.connect_material_property(node, "RGB", unreal.MaterialProperty.MP_BASE_COLOR)
+        if textures.get("normal"):
+            node = add_sample(textures["normal"], -400, 0)
+            if node:
+                mat_lib.connect_material_property(node, "RGB", unreal.MaterialProperty.MP_NORMAL)
+        if textures.get("maor"):
+            # упаковка MAOR: R - metallic, G - ambient occlusion, B - roughness
+            node = add_sample(textures["maor"], -400, 300)
+            if node:
+                mat_lib.connect_material_property(node, "R", unreal.MaterialProperty.MP_METALLIC)
+                mat_lib.connect_material_property(node, "G", unreal.MaterialProperty.MP_AMBIENT_OCCLUSION)
+                mat_lib.connect_material_property(node, "B", unreal.MaterialProperty.MP_ROUGHNESS)
+        else:
+            if textures.get("roughness"):
+                node = add_sample(textures["roughness"], -400, 300)
+                if node:
+                    mat_lib.connect_material_property(node, "R", unreal.MaterialProperty.MP_ROUGHNESS)
+            if textures.get("metallic"):
+                node = add_sample(textures["metallic"], -400, 600)
+                if node:
+                    mat_lib.connect_material_property(node, "R", unreal.MaterialProperty.MP_METALLIC)
 
-    mat_lib.recompile_material(mat)
-    unreal.EditorAssetLibrary.save_loaded_asset(mat)
+        mat_lib.recompile_material(mat)
+        unreal.EditorAssetLibrary.save_loaded_asset(mat)
 
     mesh.set_material(0, mat)
     unreal.EditorAssetLibrary.save_loaded_asset(mesh)

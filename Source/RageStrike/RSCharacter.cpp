@@ -36,9 +36,9 @@ FString RSCombatantName(const AActor* Who)
 	{
 		return FString::Printf(TEXT("Бот %d"), Bot->BotNumber);
 	}
-	if (Cast<ARSCharacter>(Who))
+	if (const ARSCharacter* Player = Cast<ARSCharacter>(Who))
 	{
-		return TEXT("Игрок");
+		return Player->Nick.IsEmpty() ? TEXT("Игрок") : Player->Nick;
 	}
 	return TEXT("?");
 }
@@ -212,6 +212,7 @@ void ARSCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLife
 	DOREPLIFETIME(ARSCharacter, CurrentWeapon);
 	DOREPLIFETIME(ARSCharacter, Team);
 	DOREPLIFETIME(ARSCharacter, bAlive);
+	DOREPLIFETIME(ARSCharacter, Nick);
 	DOREPLIFETIME(ARSCharacter, Money);
 	DOREPLIFETIME(ARSCharacter, Armor);
 	DOREPLIFETIME(ARSCharacter, bHasHelmet);
@@ -462,8 +463,27 @@ void ARSCharacter::BeginPlay()
 		if (PC->IsLocalController())
 		{
 			PC->bShowMouseCursor = false;
+			// ник задан в контроллере ещё до появления пешки — забираем его
+			if (const ARSPlayerController* RSPC = Cast<ARSPlayerController>(PC))
+			{
+				ApplyNick(RSPC->PlayerNick);
+			}
 		}
 	}
+}
+
+void ARSCharacter::ApplyNick(const FString& NewNick)
+{
+	Nick = NewNick;
+	if (!HasAuthority())
+	{
+		ServerSetNick(NewNick);
+	}
+}
+
+void ARSCharacter::ServerSetNick_Implementation(const FString& NewNick)
+{
+	Nick = NewNick.Left(16);
 }
 
 void ARSCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
