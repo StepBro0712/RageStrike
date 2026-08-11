@@ -50,6 +50,9 @@ private:
 	int32 CapturingBind = INDEX_NONE; // какая строка сейчас ловит клавишу
 	TSharedRef<SWidget> MakeArsenalPanel();
 	TSharedRef<SWidget> MakeNewsPanel();
+	// инвентарь: набор на раунд и автозакупка
+	TSharedRef<SWidget> MakeInventoryPanel();
+	TSharedRef<SWidget> MakeLoadoutRow(const FString& Label, bool bPrimary);
 	TSharedRef<SWidget> MakePlaceholderPanel();
 	TSharedRef<SWidget> MakePlayerCard();
 

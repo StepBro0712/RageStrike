@@ -189,7 +189,9 @@ void ARSPlayerController::OpenMenu(bool bStartup)
 
 	// Облётная камера и пауза — только для стартового меню. По Esc в бою
 	// игра продолжается, а вид остаётся от лица персонажа.
-	if (bStartup)
+	// В лобби облётная камера не нужна: там своя, наведённая на персонажа,
+	// и облёт просто перехватывал вид, из-за чего лобби было не видно.
+	if (bStartup && !GLobbyMode)
 	{
 		ShowMenuCamera();
 	}
@@ -317,6 +319,9 @@ void ARSPlayerController::ReloadLevel()
 
 void ARSPlayerController::HostGame()
 {
+	// Сервер поднимается сразу в матч: иначе подключившийся попадал в лобби,
+	// где нет ни раундов, ни ботов, и игра выглядела сломанной.
+	GLobbyMode = false;
 	CloseMenu();
 	ConsoleCommand(TEXT("open /Engine/Maps/Entry?listen"));
 }
@@ -328,6 +333,7 @@ void ARSPlayerController::JoinGame(const FString& IP)
 	{
 		return;
 	}
+	GLobbyMode = false;
 	CloseMenu();
 	ConsoleCommand(FString::Printf(TEXT("open %s"), *Clean));
 }

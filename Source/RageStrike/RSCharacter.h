@@ -121,6 +121,10 @@ public:
 	UPROPERTY() class UMaterialInstanceDynamic* ChamsMID = nullptr;
 	void UpdateChams();
 
+	// автозакупка набора из инвентаря, раз в раунд в фазу закупки
+	void UpdateAutoBuy();
+	int32 LastAutoBuyRound = -1;
+
 	// прочее: мелочи, которые в CS делают руками
 	bool bQuickSwitch = false; // достаём оружие мгновенно, без анимации
 	bool bHitSound = false;    // щелчок при попадании

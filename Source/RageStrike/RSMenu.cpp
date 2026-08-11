@@ -1075,6 +1075,109 @@ TSharedRef<SWidget> SRSMenu::MakeVideoPanel()
 		];
 }
 
+TSharedRef<SWidget> SRSMenu::MakeLoadoutRow(const FString& Label, bool bPrimary)
+{
+	// Список зависит от стороны: у CT и T разные стволы, поэтому берём его
+	// у той же таблицы, что и меню закупки.
+	auto Options = [this, bPrimary]()
+	{
+		const ERSTeam Team = (PC.IsValid() && !PC->IsTeamCT()) ? ERSTeam::T : ERSTeam::CT;
+		TArray<ERSWeapon> List;
+		if (bPrimary)
+		{
+			List.Append(RSWeapons::BuyCategory(3, Team)); // винтовки
+			List.Append(RSWeapons::BuyCategory(4, Team)); // снайперские
+			List.Append(RSWeapons::BuyCategory(2, Team)); // ПП и дробовики
+		}
+		else
+		{
+			List.Append(RSWeapons::BuyCategory(1, Team)); // пистолеты
+		}
+		return List;
+	};
+
+	auto Current = [bPrimary]()
+	{
+		return bPrimary ? RSOptions::GetLoadoutPrimary() : RSOptions::GetLoadoutSecondary();
+	};
+
+	auto Cycle = [Options, Current, bPrimary](int32 Dir)
+	{
+		const TArray<ERSWeapon> List = Options();
+		if (List.Num() == 0)
+		{
+			return;
+		}
+		// -1 значит «ничего не выбрано», поэтому список длиннее на один шаг
+		int32 Index = List.IndexOfByKey((ERSWeapon)Current());
+		Index = (Index == INDEX_NONE) ? -1 : Index;
+		Index += Dir;
+		if (Index < -1) { Index = List.Num() - 1; }
+		if (Index >= List.Num()) { Index = -1; }
+
+		const int32 Value = (Index < 0) ? -1 : (int32)List[Index];
+		if (bPrimary) { RSOptions::SetLoadoutPrimary(Value); }
+		else          { RSOptions::SetLoadoutSecondary(Value); }
+	};
+
+	return MakeCycleRow(FText::FromString(Label),
+		TAttribute<FText>::Create([Current]()
+		{
+			const int32 W = Current();
+			return FText::FromString(W < 0 ? TEXT("не брать")
+				: RSWeapons::Get((ERSWeapon)W).Name);
+		}),
+		[Cycle]() { Cycle(-1); },
+		[Cycle]() { Cycle(1); });
+}
+
+TSharedRef<SWidget> SRSMenu::MakeInventoryPanel()
+{
+	return SNew(SVerticalBox)
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 8.f)
+		[
+			SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Bold", 16))
+			.ColorAndOpacity(MenuAccent)
+			.Text(FText::FromString(TEXT("Набор на раунд")))
+		]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)
+		[ MakeLoadoutRow(TEXT("Основное оружие"), true) ]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)
+		[ MakeLoadoutRow(TEXT("Пистолет"), false) ]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)
+		[
+			MakeCycleRow(FText::FromString(TEXT("Броня и шлем")),
+				TAttribute<FText>::Create([]() {
+					return FText::FromString(RSOptions::GetLoadoutArmor() ? TEXT("брать") : TEXT("не брать")); }),
+				[]() { RSOptions::SetLoadoutArmor(!RSOptions::GetLoadoutArmor()); },
+				[]() { RSOptions::SetLoadoutArmor(!RSOptions::GetLoadoutArmor()); })
+		]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 10.f)
+		[
+			MakeCycleRow(FText::FromString(TEXT("Автозакупка в начале раунда")),
+				TAttribute<FText>::Create([]() {
+					return FText::FromString(RSOptions::GetAutoBuy() ? TEXT("вкл") : TEXT("выкл")); }),
+				[]() { RSOptions::SetAutoBuy(!RSOptions::GetAutoBuy()); },
+				[]() { RSOptions::SetAutoBuy(!RSOptions::GetAutoBuy()); })
+		]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 6.f)
+		[
+			SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Regular", 11))
+			.AutoWrapText(true)
+			.ColorAndOpacity(MenuDim)
+			.Text(FText::FromString(TEXT(
+				"С автозакупкой набор покупается сам, как только начинается закупка, "
+				"и только на то, что хватает денег: сначала основное, потом пистолет, потом броня. "
+				"Список зависит от выбранной стороны.")))
+		];
+}
+
 TSharedRef<SWidget> SRSMenu::MakeArsenalPanel()
 {
 	TSharedRef<SScrollBox> List = SNew(SScrollBox);
@@ -1242,7 +1345,7 @@ void SRSMenu::Construct(const FArguments& InArgs)
 					+ SWidgetSwitcher::Slot()[ MakeSettingsPanel() ]
 					+ SWidgetSwitcher::Slot()[ MakeArsenalPanel() ]
 					+ SWidgetSwitcher::Slot()[ MakeNewsPanel() ]
-					+ SWidgetSwitcher::Slot()[ MakePlaceholderPanel() ]
+					+ SWidgetSwitcher::Slot()[ MakeInventoryPanel() ]
 				]
 			]
 		]

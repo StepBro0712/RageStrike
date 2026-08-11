@@ -106,6 +106,51 @@ namespace RSOptions
 		GConfig->Flush(false, GGameUserSettingsIni);
 	}
 
+	int32 GetLoadoutPrimary()
+	{
+		int32 V = -1; // -1 — не выбрано
+		GConfig->GetInt(TEXT("RageStrike"), TEXT("LoadoutPrimary"), V, GGameUserSettingsIni);
+		return V;
+	}
+	void SetLoadoutPrimary(int32 Weapon)
+	{
+		GConfig->SetInt(TEXT("RageStrike"), TEXT("LoadoutPrimary"), Weapon, GGameUserSettingsIni);
+		GConfig->Flush(false, GGameUserSettingsIni);
+	}
+	int32 GetLoadoutSecondary()
+	{
+		int32 V = -1;
+		GConfig->GetInt(TEXT("RageStrike"), TEXT("LoadoutSecondary"), V, GGameUserSettingsIni);
+		return V;
+	}
+	void SetLoadoutSecondary(int32 Weapon)
+	{
+		GConfig->SetInt(TEXT("RageStrike"), TEXT("LoadoutSecondary"), Weapon, GGameUserSettingsIni);
+		GConfig->Flush(false, GGameUserSettingsIni);
+	}
+	bool GetAutoBuy()
+	{
+		bool bValue = false;
+		GConfig->GetBool(TEXT("RageStrike"), TEXT("AutoBuy"), bValue, GGameUserSettingsIni);
+		return bValue;
+	}
+	void SetAutoBuy(bool bValue)
+	{
+		GConfig->SetBool(TEXT("RageStrike"), TEXT("AutoBuy"), bValue, GGameUserSettingsIni);
+		GConfig->Flush(false, GGameUserSettingsIni);
+	}
+	bool GetLoadoutArmor()
+	{
+		bool bValue = true;
+		GConfig->GetBool(TEXT("RageStrike"), TEXT("LoadoutArmor"), bValue, GGameUserSettingsIni);
+		return bValue;
+	}
+	void SetLoadoutArmor(bool bValue)
+	{
+		GConfig->SetBool(TEXT("RageStrike"), TEXT("LoadoutArmor"), bValue, GGameUserSettingsIni);
+		GConfig->Flush(false, GGameUserSettingsIni);
+	}
+
 	float GetGamma()                { return GetOpt(TEXT("Gamma"), 2.2f, 1.6f, 3.2f); }
 	void SetGamma(float V)          { SetOpt(TEXT("Gamma"), FMath::Clamp(V, 1.6f, 3.2f)); ApplyGamma(); }
 

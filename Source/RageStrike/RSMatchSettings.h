@@ -52,6 +52,17 @@ namespace RSOptions
 	bool GetHideViewmodel();      // убрать оружие с экрана
 	void SetHideViewmodel(bool bValue);
 
+	// Инвентарь: что игрок берёт в раунд, если включена автозакупка.
+	// Индексы — значения ERSWeapon, чтобы не тащить сюда заголовок оружия.
+	int32 GetLoadoutPrimary();
+	void SetLoadoutPrimary(int32 Weapon);
+	int32 GetLoadoutSecondary();
+	void SetLoadoutSecondary(int32 Weapon);
+	bool GetAutoBuy();
+	void SetAutoBuy(bool bValue);
+	bool GetLoadoutArmor();
+	void SetLoadoutArmor(bool bValue);
+
 	float GetGamma();             // яркость, 1.6..3.2
 	void SetGamma(float Value);
 	void ApplyGamma();            // разово при старте и после правки

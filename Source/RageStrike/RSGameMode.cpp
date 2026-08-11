@@ -9,6 +9,10 @@
 #include "RSPlayerController.h"
 #include "RSMatchSettings.h"
 #include "GameFramework/PlayerStart.h"
+#include "Engine/StaticMeshActor.h"
+#include "Camera/CameraActor.h"
+#include "GameFramework/CharacterMovementComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "EngineUtils.h"
 #include "TimerManager.h"
@@ -92,11 +96,49 @@ void ARSGameMode::ApplyMatchSettings()
 
 void ARSGameMode::PlaceInLobby()
 {
-	// ставим игрока на карту и размораживаем: в лобби можно ходить и
-	// осматриваться, но раунд не начинается и боты не появляются
+	UWorld* World = GetWorld();
+
+	// Сцена лобби — отдельная площадка высоко над картой: карта остаётся
+	// фоном далеко внизу, а персонаж стоит один, как на витрине. Ставить
+	// его на боевой спавн было проще, но выглядело как брошенный матч.
+	const FVector Stage(0.f, 0.f, ARSArena::GetMapFloor(World) + 6000.f);
+
+	FActorSpawnParameters SP;
+	SP.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	SP.ObjectFlags |= RF_Transient;
+
+	if (AStaticMeshActor* Floor = World->SpawnActor<AStaticMeshActor>(
+		AStaticMeshActor::StaticClass(), Stage - FVector(0.f, 0.f, 100.f), FRotator::ZeroRotator, SP))
+	{
+		Floor->SetMobility(EComponentMobility::Movable);
+		if (UStaticMesh* Cube = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube")))
+		{
+			Floor->GetStaticMeshComponent()->SetStaticMesh(Cube);
+			// куб движка — метр на метр: растягиваем в круглую площадку
+			Floor->GetStaticMeshComponent()->SetWorldScale3D(FVector(4.f, 4.f, 0.4f));
+		}
+	}
+
+	// ставим игрока на площадку лицом к камере и замораживаем: в лобби
+	// незачем ходить, а с площадки можно было бы просто упасть
 	for (TActorIterator<ARSCharacter> It(GetWorld()); It; ++It)
 	{
-		It->RespawnForRound(ARSArena::FindSpawnPoint(GetWorld(), It->Team));
+		It->RespawnForRound(Stage);
+		It->SetActorRotation(FRotator::ZeroRotator);
+		// Движение выключаем, но не через FreezeUntilRound: тот прячет актёра
+		// целиком, и в лобби на площадке никого не было видно.
+		It->GetCharacterMovement()->DisableMovement();
+	}
+
+	// камера смотрит на персонажа спереди и чуть сверху
+	if (ACameraActor* Cam = World->SpawnActor<ACameraActor>(
+		ACameraActor::StaticClass(), Stage + FVector(260.f, 0.f, 95.f),
+		FRotator(-6.f, 180.f, 0.f), SP))
+	{
+		if (APlayerController* PC = World->GetFirstPlayerController())
+		{
+			PC->SetViewTargetWithBlend(Cam, 0.4f);
+		}
 	}
 
 	if (ARSGameState* State = RSState())

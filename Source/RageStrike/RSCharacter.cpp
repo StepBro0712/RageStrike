@@ -1236,7 +1236,8 @@ void ARSCharacter::SyncCheats()
 void ARSCharacter::ServerSyncCheats_Implementation(bool bInGod, bool bInSpeed,
 	bool bInMoney, bool bInAntiAim, int32 InMode, float InSwing, float InPitch, float InSpin)
 {
-	bGodMode = bInGod;
+	// сетевому клиенту бессмертия не выдаём, как бы он ни просил
+	bGodMode = bInGod && GetNetMode() == NM_Standalone;
 	bSpeedhack = bInSpeed;
 	// сетевому клиенту деньги не выдаём, как бы он ни просил
 	bInfiniteMoney = bInMoney && GetNetMode() == NM_Standalone;
@@ -1657,13 +1658,22 @@ void ARSCharacter::Tick(float DeltaTime)
 		GetMesh()->SetRelativeRotation(Fake * Base);
 	}
 
-	// Бесконечные деньги — только в одиночной игре: в сетевой это портит
-	// матч остальным, поэтому чит там просто выключается.
-	if (bInfiniteMoney && GetNetMode() != NM_Standalone)
+	// Бесконечные деньги и бессмертие — только в одиночной игре: в сетевой
+	// они портят матч остальным, поэтому там просто выключаются.
+	if (GetNetMode() != NM_Standalone)
 	{
-		bInfiniteMoney = false;
-		CheatLog(TEXT("бесконечные деньги недоступны в сетевой игре"),
-			FLinearColor(1.f, 0.5f, 0.3f), TEXT("moneynet"));
+		if (bInfiniteMoney)
+		{
+			bInfiniteMoney = false;
+			CheatLog(TEXT("бесконечные деньги недоступны в сетевой игре"),
+				FLinearColor(1.f, 0.5f, 0.3f), TEXT("moneynet"));
+		}
+		if (bGodMode)
+		{
+			bGodMode = false;
+			CheatLog(TEXT("бессмертие недоступно в сетевой игре"),
+				FLinearColor(1.f, 0.5f, 0.3f), TEXT("godnet"));
+		}
 	}
 
 	// кошелёк не пустеет: покупки списывают деньги как обычно, а сервер
@@ -1745,6 +1755,7 @@ void ARSCharacter::Tick(float DeltaTime)
 
 	RecordEnemyHistory();
 	UpdateChams();
+	UpdateAutoBuy();
 
 	// Обзор применяем каждый кадр, пока не смотрим в прицел: раньше он
 	// ставился только при выходе из прицеливания, и ползунок в меню
@@ -2212,6 +2223,40 @@ TArray<FString> ARSCharacter::ListCheatConfigs()
 		File = FPaths::GetBaseFilename(File);
 	}
 	return Files;
+}
+
+void ARSCharacter::UpdateAutoBuy()
+{
+	// Покупки разрешены только в фазу закупки, поэтому ждём её, а не
+	// покупаем при возрождении: там фаза ещё прежняя, и сервер отклонял
+	// каждый запрос. Раз в раунд — иначе набор докупался бы каждый кадр.
+	if (!IsLocallyControlled() || !RSOptions::GetAutoBuy())
+	{
+		return;
+	}
+	const ARSGameState* State = GetWorld()->GetGameState<ARSGameState>();
+	if (!State || !State->IsBuyTime() || State->RoundNumber == LastAutoBuyRound)
+	{
+		return;
+	}
+	LastAutoBuyRound = State->RoundNumber;
+
+	// Порядок важен: сначала основное — оно дороже всего, потом пистолет,
+	// потом броня. Иначе на ствол не осталось бы денег.
+	const int32 Primary = RSOptions::GetLoadoutPrimary();
+	if (Primary >= 0 && Money >= RSWeapons::Get((ERSWeapon)Primary).Price)
+	{
+		ServerBuyWeapon((ERSWeapon)Primary);
+	}
+	const int32 Secondary = RSOptions::GetLoadoutSecondary();
+	if (Secondary >= 0 && Money >= RSWeapons::Get((ERSWeapon)Secondary).Price)
+	{
+		ServerBuyWeapon((ERSWeapon)Secondary);
+	}
+	if (RSOptions::GetLoadoutArmor() && Money >= 1000)
+	{
+		ServerBuyArmor(true);
+	}
 }
 
 void ARSCharacter::UpdateChams()
@@ -3183,6 +3228,7 @@ void ARSCharacter::RespawnForRound(const FVector& Location)
 	BuyCategory = -1;
 	bAlive = true;
 	Health = 100.f;
+
 
 	// пистолет по команде, если своего нет; купленное остаётся у выживших
 	if (!bHasSecondary || !RSWeapons::AllowedFor(SecondaryType, Team))
