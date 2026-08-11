@@ -17,13 +17,13 @@ namespace
 {
 	// Палитра снята с эталонного меню: почти чёрный фон, панели чуть светлее,
 	// синий акцент только на включённом и на выбранном разделе.
-	const FLinearColor ColBack   = FLinearColor(0.055f, 0.059f, 0.075f, 0.98f);
-	const FLinearColor ColPanel  = FLinearColor(0.086f, 0.090f, 0.110f, 1.f);
-	const FLinearColor ColRow    = FLinearColor(0.11f, 0.115f, 0.14f, 1.f);
-	const FLinearColor ColAccent = FLinearColor(0.29f, 0.42f, 0.94f, 1.f);
-	const FLinearColor ColOff    = FLinearColor(0.20f, 0.21f, 0.25f, 1.f);
-	const FLinearColor ColText   = FLinearColor(0.84f, 0.86f, 0.90f, 1.f);
-	const FLinearColor ColDim    = FLinearColor(0.45f, 0.47f, 0.53f, 1.f);
+	const FLinearColor CMBack   = FLinearColor(0.055f, 0.059f, 0.075f, 0.98f);
+	const FLinearColor CMPanel  = FLinearColor(0.086f, 0.090f, 0.110f, 1.f);
+	const FLinearColor CMRow    = FLinearColor(0.11f, 0.115f, 0.14f, 1.f);
+	const FLinearColor CMAccent = FLinearColor(0.29f, 0.42f, 0.94f, 1.f);
+	const FLinearColor CMOff    = FLinearColor(0.20f, 0.21f, 0.25f, 1.f);
+	const FLinearColor CMText   = FLinearColor(0.84f, 0.86f, 0.90f, 1.f);
+	const FLinearColor CMDim    = FLinearColor(0.45f, 0.47f, 0.53f, 1.f);
 
 	const FSlateBrush* WhiteBrush()
 	{
@@ -69,7 +69,7 @@ void SRSCheatMenu::Construct(const FArguments& InArgs)
 			.WidthOverride(940.f)
 			.HeightOverride(620.f)
 			[
-				Fill(ColBack,
+				Fill(CMBack,
 					SNew(SHorizontalBox)
 
 					// слева разделы
@@ -79,7 +79,7 @@ void SRSCheatMenu::Construct(const FArguments& InArgs)
 						SNew(SBox)
 						.WidthOverride(180.f)
 						[
-							Fill(ColPanel,
+							Fill(CMPanel,
 								SNew(SVerticalBox)
 
 								+ SVerticalBox::Slot()
@@ -89,7 +89,7 @@ void SRSCheatMenu::Construct(const FArguments& InArgs)
 									SNew(STextBlock)
 									.Text(FText::FromString(TEXT("RAGESTRIKE")))
 									.Font(Font(15, true))
-									.ColorAndOpacity(ColText)
+									.ColorAndOpacity(CMText)
 								]
 
 								+ SVerticalBox::Slot()
@@ -99,7 +99,7 @@ void SRSCheatMenu::Construct(const FArguments& InArgs)
 									SNew(STextBlock)
 									.Text(FText::FromString(TEXT("встроенные читы")))
 									.Font(Font(9))
-									.ColorAndOpacity(ColDim)
+									.ColorAndOpacity(CMDim)
 								]
 
 								+ SVerticalBox::Slot().AutoHeight()[ MakeSideButton(TEXT("Rage"), 0) ]
@@ -115,7 +115,7 @@ void SRSCheatMenu::Construct(const FArguments& InArgs)
 									SNew(STextBlock)
 									.Text(FText::FromString(TEXT("Del / Insert — закрыть")))
 									.Font(Font(9))
-									.ColorAndOpacity(ColDim)
+									.ColorAndOpacity(CMDim)
 								], 0.f)
 						]
 					]
@@ -183,7 +183,7 @@ TSharedRef<SWidget> SRSCheatMenu::MakeSideButton(const FString& Label, int32 Ind
 			SNew(SBorder)
 			.BorderImage(WhiteBrush())
 			.BorderBackgroundColor_Lambda([this, Index]()
-				{ return Page == Index ? ColRow : FLinearColor(0.f, 0.f, 0.f, 0.f); })
+				{ return Page == Index ? CMRow : FLinearColor(0.f, 0.f, 0.f, 0.f); })
 			.Padding(FMargin(16.f, 9.f))
 			[
 				SNew(SHorizontalBox)
@@ -198,7 +198,7 @@ TSharedRef<SWidget> SRSCheatMenu::MakeSideButton(const FString& Label, int32 Ind
 						SNew(SBorder)
 						.BorderImage(WhiteBrush())
 						.BorderBackgroundColor_Lambda([this, Index]()
-							{ return Page == Index ? ColAccent : FLinearColor(0.f, 0.f, 0.f, 0.f); })
+							{ return Page == Index ? CMAccent : FLinearColor(0.f, 0.f, 0.f, 0.f); })
 					]
 				]
 
@@ -208,7 +208,7 @@ TSharedRef<SWidget> SRSCheatMenu::MakeSideButton(const FString& Label, int32 Ind
 					SNew(STextBlock)
 					.Text(FText::FromString(Label))
 					.Font(Font(11, true))
-					.ColorAndOpacity_Lambda([this, Index]() { return Page == Index ? ColText : ColDim; })
+					.ColorAndOpacity_Lambda([this, Index]() { return Page == Index ? CMText : CMDim; })
 				]
 			]
 		];
@@ -240,18 +240,18 @@ TSharedRef<SWidget> SRSCheatMenu::MakeConfigBar()
 			[
 				SNew(SBorder)
 				.BorderImage(WhiteBrush())
-				.BorderBackgroundColor(ColRow)
+				.BorderBackgroundColor(CMRow)
 				.Padding(FMargin(12.f, 6.f))
 				[
 					SNew(STextBlock)
 					.Text(FText::FromString(Label))
 					.Font(Font(10))
-					.ColorAndOpacity(ColText)
+					.ColorAndOpacity(CMText)
 				]
 			];
 	};
 
-	return Fill(ColPanel,
+	return Fill(CMPanel,
 		SNew(SHorizontalBox)
 
 		// выбор сохранённого
@@ -267,7 +267,7 @@ TSharedRef<SWidget> SRSCheatMenu::MakeConfigBar()
 				.OnGenerateWidget_Lambda([](TSharedPtr<FString> In)
 					{
 						return SNew(STextBlock).Text(FText::FromString(*In))
-							.Font(Font(10)).ColorAndOpacity(ColText);
+							.Font(Font(10)).ColorAndOpacity(CMText);
 					})
 				.OnSelectionChanged_Lambda([this](TSharedPtr<FString> In, ESelectInfo::Type)
 					{
@@ -281,7 +281,7 @@ TSharedRef<SWidget> SRSCheatMenu::MakeConfigBar()
 				[
 					SNew(STextBlock)
 					.Font(Font(10))
-					.ColorAndOpacity(ColDim)
+					.ColorAndOpacity(CMDim)
 					.Text_Lambda([this]()
 						{
 							const ARSCharacter* C = Owner.Get();
@@ -452,7 +452,7 @@ TSharedRef<SWidget> SRSCheatMenu::MakeLegitPage()
 				SNew(STextBlock)
 				.Text(FText::FromString(TEXT("Наводится только на тех, кого видно:\nсквозь стены прицел не уводится.")))
 				.Font(Font(9))
-				.ColorAndOpacity(ColDim)
+				.ColorAndOpacity(CMDim)
 			]
 		]
 
@@ -529,14 +529,14 @@ TSharedRef<SWidget> SRSCheatMenu::MakeSection(const FString& Title, TSharedRef<S
 			SNew(STextBlock)
 			.Text(FText::FromString(Title))
 			.Font(Font(9, true))
-			.ColorAndOpacity(ColDim)
+			.ColorAndOpacity(CMDim)
 		]
 
 		+ SVerticalBox::Slot()
 		.AutoHeight()
 		.Padding(0.f, 0.f, 0.f, 14.f)
 		[
-			Fill(ColPanel, Rows, 10.f)
+			Fill(CMPanel, Rows, 10.f)
 		];
 }
 
@@ -571,7 +571,7 @@ TSharedRef<SWidget> SRSCheatMenu::MakeToggle(const FString& Label, bool ARSChara
 					SNew(STextBlock)
 					.Text(FText::FromString(Label))
 					.Font(Font(10))
-					.ColorAndOpacity(ColText)
+					.ColorAndOpacity(CMText)
 				]
 
 				// сам тумблер: рамка и бегунок, как в эталоне
@@ -585,7 +585,7 @@ TSharedRef<SWidget> SRSCheatMenu::MakeToggle(const FString& Label, bool ARSChara
 					[
 						SNew(SBorder)
 						.BorderImage(WhiteBrush())
-						.BorderBackgroundColor_Lambda([Get]() { return FSlateColor(Get() ? ColAccent : ColOff); })
+						.BorderBackgroundColor_Lambda([Get]() { return FSlateColor(Get() ? CMAccent : CMOff); })
 						.Padding(2.f)
 						[
 							// бегунок двигаем отступом: выравнивание слота
@@ -622,7 +622,7 @@ TSharedRef<SWidget> SRSCheatMenu::MakeSlider(const FString& Label, float ARSChar
 				SNew(STextBlock)
 				.Text(FText::FromString(Label))
 				.Font(Font(10))
-				.ColorAndOpacity(ColText)
+				.ColorAndOpacity(CMText)
 			]
 
 			+ SHorizontalBox::Slot()
@@ -631,8 +631,8 @@ TSharedRef<SWidget> SRSCheatMenu::MakeSlider(const FString& Label, float ARSChar
 			.Padding(6.f, 0.f)
 			[
 				SNew(SSlider)
-				.SliderBarColor(ColOff)
-				.SliderHandleColor(ColAccent)
+				.SliderBarColor(CMOff)
+				.SliderHandleColor(CMAccent)
 				.Value_Lambda([this, Field, Min, Max]()
 					{
 						const ARSCharacter* C = Owner.Get();
@@ -658,7 +658,7 @@ TSharedRef<SWidget> SRSCheatMenu::MakeSlider(const FString& Label, float ARSChar
 					SNew(STextBlock)
 					.Justification(ETextJustify::Right)
 					.Font(Font(10))
-					.ColorAndOpacity(ColDim)
+					.ColorAndOpacity(CMDim)
 					.Text_Lambda([this, Field, Suffix]()
 						{
 							const ARSCharacter* C = Owner.Get();
@@ -687,7 +687,7 @@ TSharedRef<SWidget> SRSCheatMenu::MakeIntSlider(const FString& Label, int32 ARSC
 				SNew(STextBlock)
 				.Text(FText::FromString(Label))
 				.Font(Font(10))
-				.ColorAndOpacity(ColText)
+				.ColorAndOpacity(CMText)
 			]
 
 			+ SHorizontalBox::Slot()
@@ -696,8 +696,8 @@ TSharedRef<SWidget> SRSCheatMenu::MakeIntSlider(const FString& Label, int32 ARSC
 			.Padding(6.f, 0.f)
 			[
 				SNew(SSlider)
-				.SliderBarColor(ColOff)
-				.SliderHandleColor(ColAccent)
+				.SliderBarColor(CMOff)
+				.SliderHandleColor(CMAccent)
 				.Value_Lambda([this, Field, Min, Max]()
 					{
 						const ARSCharacter* C = Owner.Get();
@@ -722,7 +722,7 @@ TSharedRef<SWidget> SRSCheatMenu::MakeIntSlider(const FString& Label, int32 ARSC
 					SNew(STextBlock)
 					.Justification(ETextJustify::Right)
 					.Font(Font(10))
-					.ColorAndOpacity(ColDim)
+					.ColorAndOpacity(CMDim)
 					.Text_Lambda([this, Field, Suffix]()
 						{
 							const ARSCharacter* C = Owner.Get();
@@ -758,7 +758,7 @@ TSharedRef<SWidget> SRSCheatMenu::MakeCombo(const FString& Label, int32 ARSChara
 				SNew(STextBlock)
 				.Text(FText::FromString(Label))
 				.Font(Font(10))
-				.ColorAndOpacity(ColText)
+				.ColorAndOpacity(CMText)
 			]
 
 			+ SHorizontalBox::Slot()
@@ -775,7 +775,7 @@ TSharedRef<SWidget> SRSCheatMenu::MakeCombo(const FString& Label, int32 ARSChara
 							return SNew(STextBlock)
 								.Text(FText::FromString(*In))
 								.Font(Font(10))
-								.ColorAndOpacity(ColText);
+								.ColorAndOpacity(CMText);
 						})
 					.OnSelectionChanged_Lambda([this, Field, Owned, bSync](TSharedPtr<FString> In, ESelectInfo::Type)
 						{
@@ -790,7 +790,7 @@ TSharedRef<SWidget> SRSCheatMenu::MakeCombo(const FString& Label, int32 ARSChara
 					[
 						SNew(STextBlock)
 						.Font(Font(10))
-						.ColorAndOpacity(ColDim)
+						.ColorAndOpacity(CMDim)
 						.Text_Lambda([this, Field, Owned]()
 							{
 								const ARSCharacter* C = Owner.Get();
