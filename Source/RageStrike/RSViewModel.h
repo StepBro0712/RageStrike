@@ -21,8 +21,26 @@ struct FRSViewModel
 	bool IsValid() const { return Mesh != nullptr; }
 };
 
+// Посадка вьюмодели у камеры. Автоподбор по габаритам не годится: у скелета
+// AK-47 размеры в исходнике меньше сантиметра, и вычисленный масштаб раздувал
+// модель на пол-экрана. Поэтому цифры задаются вручную на каждый ствол.
+struct FRSVMPlace
+{
+	float Scale = 1.f;
+	FVector Loc = FVector::ZeroVector;   // относительно камеры
+	FRotator Rot = FRotator::ZeroRotator;
+};
+
 namespace RSViewModel
 {
 	// nullptr-структура, если у оружия нет скелетной вьюмодели
 	const FRSViewModel* Get(ERSWeapon Weapon);
+
+	// Посадка: сначала из настроек игрока (их пишет режим подгонки),
+	// иначе значение по умолчанию из кода.
+	FRSVMPlace GetPlace(ERSWeapon Weapon);
+	void SetPlace(ERSWeapon Weapon, const FRSVMPlace& P);
+	// строка с текущими цифрами — её показывает HUD и печатает лог,
+	// чтобы подобранные значения можно было вписать в код
+	FString PlaceToString(ERSWeapon Weapon);
 }

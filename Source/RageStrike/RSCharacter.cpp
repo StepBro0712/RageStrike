@@ -662,6 +662,27 @@ void ARSCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 	PlayerInputComponent->BindKey(EKeys::Delete, IE_Pressed, this, &ARSCharacter::ToggleCheatMenu);
 	PlayerInputComponent->BindKey(EKeys::Insert, IE_Pressed, this, &ARSCharacter::ToggleCheatMenu);
 	PlayerInputComponent->BindKey(EKeys::V, IE_Pressed, this, &ARSCharacter::ToggleView);
+
+	// Режим подгонки вьюмодели: F8 включает, дальше нампад двигает модель.
+	// Значения сразу пишутся в настройки, поэтому подбор переживает
+	// перезапуск и не требует пересборки.
+	PlayerInputComponent->BindKey(EKeys::F8, IE_Pressed, this, &ARSCharacter::ToggleVMTune);
+	// Раскладка под клавиатуру без нампада: стрелки и навигационный блок.
+	// Все они работают только при включённом режиме подгонки.
+	PlayerInputComponent->BindKey(EKeys::Up, IE_Pressed, this, &ARSCharacter::VMFwd);
+	PlayerInputComponent->BindKey(EKeys::Down, IE_Pressed, this, &ARSCharacter::VMBack);
+	PlayerInputComponent->BindKey(EKeys::Left, IE_Pressed, this, &ARSCharacter::VMLeft);
+	PlayerInputComponent->BindKey(EKeys::Right, IE_Pressed, this, &ARSCharacter::VMRight);
+	PlayerInputComponent->BindKey(EKeys::PageUp, IE_Pressed, this, &ARSCharacter::VMUp);
+	PlayerInputComponent->BindKey(EKeys::PageDown, IE_Pressed, this, &ARSCharacter::VMDown);
+	PlayerInputComponent->BindKey(EKeys::RightBracket, IE_Pressed, this, &ARSCharacter::VMBigger);
+	PlayerInputComponent->BindKey(EKeys::LeftBracket, IE_Pressed, this, &ARSCharacter::VMSmaller);
+	PlayerInputComponent->BindKey(EKeys::Period, IE_Pressed, this, &ARSCharacter::VMYawPlus);
+	PlayerInputComponent->BindKey(EKeys::Comma, IE_Pressed, this, &ARSCharacter::VMYawMinus);
+	PlayerInputComponent->BindKey(EKeys::Apostrophe, IE_Pressed, this, &ARSCharacter::VMPitchPlus);
+	PlayerInputComponent->BindKey(EKeys::Semicolon, IE_Pressed, this, &ARSCharacter::VMRollPlus);
+	PlayerInputComponent->BindKey(EKeys::Home, IE_Pressed, this, &ARSCharacter::CycleVMStep);
+	PlayerInputComponent->BindKey(EKeys::End, IE_Pressed, this, &ARSCharacter::ResetVMPlace);
 	PlayerInputComponent->BindKey(EKeys::RightMouseButton, IE_Pressed, this, &ARSCharacter::StartAim);
 	PlayerInputComponent->BindKey(EKeys::RightMouseButton, IE_Released, this, &ARSCharacter::StopAim);
 }
@@ -1198,27 +1219,44 @@ void ARSCharacter::ApplyWeaponVisuals()
 	{
 		FPGun->SetSkeletalMesh(VM->Mesh);
 
-		// та же подгонка по габаритам, что у статик-мешей
-		const FVector Extent = VM->Mesh->GetBounds().BoxExtent;
-		const float Longest = FMath::Max3(Extent.X, Extent.Y, Extent.Z) * 2.f;
-		const float Fit = (Longest > 0.01f)
-			? RSWeapons::RealLength(CurrentWeapon) * 0.55f / Longest : 1.f;
-		FPGun->SetRelativeScale3D(FVector(Fit));
+		// Посадка берётся из таблицы, а не считается по габаритам. Автоподбор
+		// здесь не работает: у скелета AK-47 размеры в исходнике меньше
+		// сантиметра, и вычисленный масштаб раздувал модель на пол-экрана.
+		FRSVMPlace Place = RSViewModel::GetPlace(CurrentWeapon);
 
-		FRotator Align(0.f, -90.f, 0.f);
-		if (Extent.Z >= Extent.X && Extent.Z >= Extent.Y)
+		// Нулевой масштаб = «посчитать по мешу»: приводим длинную ось меша
+		// к настоящей длине ствола. Это и есть натуральный размер, с него
+		// разумно начинать подбор.
+		if (Place.Scale <= 0.f)
 		{
-			Align = (FQuat(Align) * FQuat(FRotator(0.f, 0.f, -90.f))).Rotator();
+			const FVector Ext = VM->Mesh->GetBounds().BoxExtent;
+			const float Longest = FMath::Max3(Ext.X, Ext.Y, Ext.Z) * 2.f;
+			Place.Scale = (Longest > KINDA_SMALL_NUMBER)
+				? RSWeapons::RealLength(CurrentWeapon) / Longest : 1.f;
 		}
-		else if (Extent.X > Extent.Y)
+		FPGun->SetRelativeScale3D(FVector(Place.Scale));
+
+		// В режиме подгонки печатаем реальные габариты меша и масштаб, при
+		// котором ствол получил бы натуральную длину. Без этих цифр подбор
+		// превращается в гадание: по картинке не отличить «слишком крупно»
+		// от «слишком близко».
+		if (bVMTune)
 		{
-			Align = (FQuat(Align) * FQuat(FRotator(0.f, 90.f, 0.f))).Rotator();
+			const FVector Ext = VM->Mesh->GetBounds().BoxExtent;
+			const float Longest = FMath::Max3(Ext.X, Ext.Y, Ext.Z) * 2.f;
+			const float Natural = (Longest > KINDA_SMALL_NUMBER)
+				? RSWeapons::RealLength(CurrentWeapon) / Longest : 0.f;
+			UE_LOG(LogTemp, Display,
+				TEXT("RS/вьюмодель %d: габариты %.3f x %.3f x %.3f, длина %.3f, "
+					 "натуральный масштаб %.2f, сейчас %.2f"),
+				(int32)CurrentWeapon, Ext.X * 2.f, Ext.Y * 2.f, Ext.Z * 2.f,
+				Longest, Natural, Place.Scale);
+			CheatLog(FString::Printf(TEXT("габарит %.2f  натуральный масштаб %.1f"),
+				Longest, Natural), FLinearColor(0.4f, 0.9f, 1.f));
 		}
 
-		GunBaseRot = Align;
-		GunBaseLoc = CamLoc - FQuat(Align).RotateVector(VM->Mesh->GetBounds().Origin * Fit);
-		GunBaseLoc.X += RSWeapons::RealLength(CurrentWeapon) * 0.55f * 0.35f;
-
+		GunBaseRot = Place.Rot;
+		GunBaseLoc = Place.Loc;
 		FPGun->SetRelativeLocation(GunBaseLoc);
 		FPGun->SetRelativeRotation(GunBaseRot);
 
@@ -1265,6 +1303,84 @@ void ARSCharacter::UpdateSkeletalViewModel()
 			PlayVMAnim(VM->Idle, true, 0.f);
 		}
 	}
+}
+
+void ARSCharacter::ToggleVMTune()
+{
+	bVMTune = !bVMTune;
+	CheatLog(bVMTune
+		? FString::Printf(TEXT("подгонка вьюмодели вкл — %s"),
+			*RSViewModel::PlaceToString(CurrentWeapon))
+		: FString(TEXT("подгонка вьюмодели выкл")),
+		FLinearColor(0.4f, 0.9f, 1.f));
+}
+
+void ARSCharacter::CycleVMStep()
+{
+	if (!bVMTune)
+	{
+		return;
+	}
+	// 1 / 5 / 20 см: грубо вытащить модель из лица и потом довести
+	VMStep = (VMStep >= 20.f) ? 1.f : (VMStep >= 5.f ? 20.f : 5.f);
+	CheatLog(FString::Printf(TEXT("шаг %.0f см"), VMStep), FLinearColor(0.4f, 0.9f, 1.f));
+}
+
+void ARSCharacter::ResetVMPlace()
+{
+	if (!bVMTune)
+	{
+		return;
+	}
+	// Стираем подобранное и возвращаемся к натуральной длине, посчитанной
+	// по габаритам меша — той же формуле, что верно сажает статик-меши.
+	const FRSViewModel* VM = RSViewModel::Get(CurrentWeapon);
+	if (!VM || !VM->Mesh)
+	{
+		return;
+	}
+	const FVector Ext = VM->Mesh->GetBounds().BoxExtent;
+	const float Longest = FMath::Max3(Ext.X, Ext.Y, Ext.Z) * 2.f;
+
+	FRSVMPlace P;
+	// натуральная длина ствола, без коэффициента 0.55 от статик-мешей
+	P.Scale = (Longest > KINDA_SMALL_NUMBER)
+		? RSWeapons::RealLength(CurrentWeapon) / Longest : 1.f;
+	P.Loc = FVector(RSWeapons::RealLength(CurrentWeapon) * 0.3f, 9.f, -9.f);
+	P.Rot = FRotator(0.f, -90.f, 0.f);
+	RSViewModel::SetPlace(CurrentWeapon, P);
+
+	ApplyWeaponVisuals();
+	CheatLog(FString::Printf(TEXT("сброс: %s"), *RSViewModel::PlaceToString(CurrentWeapon)),
+		FLinearColor(1.f, 0.8f, 0.3f));
+}
+
+void ARSCharacter::NudgeVM(const FVector& DLoc, const FRotator& DRot, float DScale)
+{
+	if (!bVMTune)
+	{
+		return; // вне режима подгонки нампад занят обычной игрой
+	}
+	if (!RSViewModel::Get(CurrentWeapon))
+	{
+		CheatLog(TEXT("у этого ствола нет скелетной вьюмодели"), FLinearColor(1.f, 0.6f, 0.3f));
+		return;
+	}
+
+	FRSVMPlace P = RSViewModel::GetPlace(CurrentWeapon);
+	P.Loc += DLoc;
+	P.Rot += DRot;
+	// Шаг масштаба умножающий, а не прибавляющий: диапазон подбора тут
+	// в сотни раз, и линейным шагом его не пройти. 15% за нажатие —
+	// удвоение примерно за пять нажатий.
+	P.Scale = FMath::Clamp(P.Scale * (DScale > 0.f ? 1.15f : (DScale < 0.f ? 1.f / 1.15f : 1.f)),
+		0.001f, 1000.f);
+	RSViewModel::SetPlace(CurrentWeapon, P);
+
+	ApplyWeaponVisuals();
+	CheatLog(RSViewModel::PlaceToString(CurrentWeapon), FLinearColor(0.4f, 0.9f, 1.f));
+	UE_LOG(LogTemp, Display, TEXT("RS/вьюмодель %d: %s"),
+		(int32)CurrentWeapon, *RSViewModel::PlaceToString(CurrentWeapon));
 }
 
 void ARSCharacter::SetThirdPerson(bool bOn)

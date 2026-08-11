@@ -378,6 +378,31 @@ private:
 	void FinishReload();
 	void ToggleView();
 
+	// Режим подгонки вьюмодели (F8). Работает только на своей машине и
+	// нужен, чтобы подобрать масштаб и посадку каждого ствола вживую,
+	// без пересборки: цифры сразу пишутся в настройки.
+	bool bVMTune = false;
+	// Шаг перемещения в сантиметрах. Переключается, потому что одним шагом
+	// не обойтись: сначала модель надо грубо вытащить из лица, потом
+	// доводить миллиметрами.
+	float VMStep = 5.f;
+	void ToggleVMTune();
+	void CycleVMStep();
+	void ResetVMPlace();
+	void NudgeVM(const FVector& DLoc, const FRotator& DRot, float DScale);
+	void VMFwd()       { NudgeVM(FVector( VMStep, 0.f, 0.f), FRotator::ZeroRotator, 0.f); }
+	void VMBack()      { NudgeVM(FVector(-VMStep, 0.f, 0.f), FRotator::ZeroRotator, 0.f); }
+	void VMLeft()      { NudgeVM(FVector(0.f, -VMStep, 0.f), FRotator::ZeroRotator, 0.f); }
+	void VMRight()     { NudgeVM(FVector(0.f,  VMStep, 0.f), FRotator::ZeroRotator, 0.f); }
+	void VMUp()        { NudgeVM(FVector(0.f, 0.f,  VMStep), FRotator::ZeroRotator, 0.f); }
+	void VMDown()      { NudgeVM(FVector(0.f, 0.f, -VMStep), FRotator::ZeroRotator, 0.f); }
+	void VMBigger()    { NudgeVM(FVector::ZeroVector, FRotator::ZeroRotator,  1.f); }
+	void VMSmaller()   { NudgeVM(FVector::ZeroVector, FRotator::ZeroRotator, -1.f); }
+	void VMYawPlus()   { NudgeVM(FVector::ZeroVector, FRotator(0.f,  5.f, 0.f), 0.f); }
+	void VMYawMinus()  { NudgeVM(FVector::ZeroVector, FRotator(0.f, -5.f, 0.f), 0.f); }
+	void VMPitchPlus() { NudgeVM(FVector::ZeroVector, FRotator(5.f, 0.f, 0.f), 0.f); }
+	void VMRollPlus()  { NudgeVM(FVector::ZeroVector, FRotator(0.f, 0.f, 5.f), 0.f); }
+
 	// цифровые клавиши: вне закупки — слоты, в закупке — навигация по меню
 	void Num1() { HandleNumberKey(1); }
 	void Num2() { HandleNumberKey(2); }
