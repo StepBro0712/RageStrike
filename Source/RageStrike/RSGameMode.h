@@ -46,6 +46,9 @@ private:
 	void PlaceEveryone();
 
 	UFUNCTION()
+	void PlaceInLobby();
+
+	UFUNCTION()
 	void StartBuyPhase();
 
 	UFUNCTION()

@@ -22,7 +22,9 @@ public class RageStrike : ModuleRules
 			"Networking",
 			"ApplicationCore",
 			"RenderCore",
-			"RHI"
+			"RHI",
+			// экран загрузки: логотип и индикатор поверх чёрного окна
+			"MoviePlayer"
 		});
 	}
 }

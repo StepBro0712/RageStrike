@@ -21,6 +21,34 @@ namespace
 	// стартовое меню показываем один раз за запуск процесса,
 	// а не после каждого перехода (Host/Join делают travel на новую карту)
 	bool GStartupMenuShown = false;
+
+	// игра запускается в лобби: персонаж стоит, матч не идёт
+	bool GLobbyMode = true;
+}
+
+bool ARSPlayerController::IsLobby()
+{
+	return GLobbyMode;
+}
+
+void ARSPlayerController::SetLobby(bool bValue)
+{
+	GLobbyMode = bValue;
+}
+
+void ARSPlayerController::EnterLobby()
+{
+	// возврат в лобби — это перезапуск уровня: матч должен закончиться,
+	// боты исчезнуть, счёт обнулиться
+	GLobbyMode = true;
+	AllowStartupMenu();
+	ReloadLevel();
+}
+
+void ARSPlayerController::StartMatch()
+{
+	GLobbyMode = false;
+	ReloadLevel();
 }
 
 void ARSPlayerController::BeginPlay()
@@ -59,6 +87,17 @@ void ARSPlayerController::BeginPlay()
 	{
 		GStartupMenuShown = true;
 		OpenMenu(true);
+	}
+
+	// В лобби смотрим на своего персонажа со стороны: он стоит на карте,
+	// а меню открыто поверх. Вид от третьего лица включаем сами, потому что
+	// от первого в лобби видно только руки.
+	if (GLobbyMode && IsLocalController())
+	{
+		if (ARSCharacter* RSPawn = Cast<ARSCharacter>(GetPawn()))
+		{
+			RSPawn->SetThirdPerson(true);
+		}
 	}
 }
 
@@ -262,6 +301,14 @@ bool ARSPlayerController::IsTeamCT() const
 
 void ARSPlayerController::ReloadLevel()
 {
+	// В лобби уровень перезагружается ради смены карты, и меню должно
+	// открыться снова: оно показывается один раз за запуск, поэтому без
+	// этого выглядело так, будто выбор карты сразу запускает матч.
+	if (GLobbyMode)
+	{
+		AllowStartupMenu();
+	}
+
 	CloseMenu();
 	ConsoleCommand(GetNetMode() == NM_ListenServer
 		? TEXT("open /Engine/Maps/Entry?listen")

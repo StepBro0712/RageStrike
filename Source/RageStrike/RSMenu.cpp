@@ -367,24 +367,59 @@ TSharedRef<SWidget> SRSMenu::MakePlayPanel()
 				.ContentPadding(FMargin(0.f, 14.f))
 				.OnClicked_Lambda([this]()
 				{
-					if (PC.IsValid()) { PC->CloseMenu(); }
+					if (!PC.IsValid())
+					{
+						return FReply::Handled();
+					}
+					// В лобби большая кнопка начинает матч, в матче — просто
+					// закрывает меню. Отдельной кнопки «играть» больше нет:
+					// две одинаковые рядом только путали.
+					if (ARSPlayerController::IsLobby())
+					{
+						PC->StartMatch();
+					}
+					else
+					{
+						PC->CloseMenu();
+					}
 					return FReply::Handled();
 				})
 				[
 					SNew(STextBlock)
 					.Font(FCoreStyle::GetDefaultFontStyle("Bold", 20))
 					.ColorAndOpacity(FLinearColor(0.05f, 0.05f, 0.05f))
-					.Text(FText::FromString(bStartup ? TEXT("ИГРАТЬ") : TEXT("ПРОДОЛЖИТЬ")))
+					.Text(FText::FromString(ARSPlayerController::IsLobby()
+						? TEXT("ИГРАТЬ") : TEXT("ПРОДОЛЖИТЬ")))
 				]
 			]
 		]
 
+		// В матче под большой кнопкой — выход в лобби и перезапуск матча.
+		// В лобби их прятать: там начинать нечего и выходить некуда.
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)
 		[
-			MakeButton(FText::FromString(TEXT("Новый матч")), [this]()
-			{
-				if (PC.IsValid()) { PC->ReloadLevel(); }
-			})
+			SNew(SBox)
+			.Visibility_Lambda([]()
+				{ return ARSPlayerController::IsLobby() ? EVisibility::Collapsed : EVisibility::Visible; })
+			[
+				SNew(SVerticalBox)
+
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
+				[
+					MakeButton(FText::FromString(TEXT("Новый матч")), [this]()
+					{
+						if (PC.IsValid()) { PC->StartMatch(); }
+					})
+				]
+
+				+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
+				[
+					MakeButton(FText::FromString(TEXT("Выйти в лобби")), [this]()
+					{
+						if (PC.IsValid()) { PC->EnterLobby(); }
+					})
+				]
+			]
 		]
 
 		// --- правила матча ---
@@ -1080,22 +1115,21 @@ TSharedRef<SWidget> SRSMenu::MakeNewsPanel()
 		[
 			SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Bold", 16))
 			.ColorAndOpacity(MenuAccent)
-			.Text(FText::FromString(TEXT("Обновление v0.5.1")))
+			.Text(FText::FromString(TEXT("Обновление v0.5.2")))
 		]
 		+ SVerticalBox::Slot().AutoHeight()
 		[
 			SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Regular", 13))
 			.AutoWrapText(true)
 			.Text(FText::FromString(TEXT(
-				"— Меню читов переписано: разделы, ползунки, списки и конфиги по именам\n"
-				"— Хитбоксы по костям: голова, грудь, живот и конечности со своим уроном\n"
-				"— Рейдж: минимальный урон, шанс попадания, бэктрек, двойной выстрел, бинды\n"
-				"— Анти-аим с режимами и chams — модели видно сквозь стены\n"
-				"— Боты больше не проходят мимо противника\n"
-				"— Настройки: перебинд управления, прицел с превью и RGBA, обзор, яркость\n"
-				"— Оружие на экране двигается по трём осям\n"
-				"— Раздельная громкость музыки и эффектов, автоперезарядка\n"
-				"— Время раунда и закупки задаётся перед матчем")))
+				"— Лобби: персонаж стоит на карте, матч начинается по кнопке «Играть»\n"
+				"— Из матча можно выйти в лобби, не закрывая игру\n"
+				"— Экран загрузки с логотипом вместо чёрного окна\n"
+				"— Своя заставка при запуске\n"
+				"— Раздел Legit: плавная наводка, время реакции, контроль отдачи\n"
+				"— Оптика снайперки залита ровным кругом, без углов\n"
+				"— Раньше: хитбоксы, chams, конфиги читов, перебинд управления,\n"
+				"   настройка прицела, обзор и яркость")))
 		];
 }
 

@@ -51,6 +51,14 @@ void ARSGameMode::BeginPlay()
 		It->FreezeUntilRound();
 	}
 
+	// В лобби матч не запускаем: ни ботов, ни раундов, ни закупки —
+	// персонаж просто стоит на карте, а поверх открыто меню.
+	if (ARSPlayerController::IsLobby())
+	{
+		GetWorldTimerManager().SetTimer(StartTimer, this, &ARSGameMode::PlaceInLobby, 0.25f, false);
+		return;
+	}
+
 	// расстановка ждёт, пока физика зарегистрирует коллизию карты:
 	// иначе трассировки не находят пол и все проваливаются под карту
 	GetWorldTimerManager().SetTimer(StartTimer, this, &ARSGameMode::PlaceEveryone, 0.25f, false);
@@ -80,6 +88,22 @@ void ARSGameMode::ApplyMatchSettings()
 
 	// состав подгоняем под новый размер команды прямо сейчас
 	RebalanceRoster();
+}
+
+void ARSGameMode::PlaceInLobby()
+{
+	// ставим игрока на карту и размораживаем: в лобби можно ходить и
+	// осматриваться, но раунд не начинается и боты не появляются
+	for (TActorIterator<ARSCharacter> It(GetWorld()); It; ++It)
+	{
+		It->RespawnForRound(ARSArena::FindSpawnPoint(GetWorld(), It->Team));
+	}
+
+	if (ARSGameState* State = RSState())
+	{
+		State->Phase = ERSPhase::Lobby;
+		State->Announcement = TEXT("Лобби — нажми «Играть» в меню");
+	}
 }
 
 void ARSGameMode::PlaceEveryone()
@@ -364,7 +388,9 @@ void ARSGameMode::RebalanceRoster()
 	}
 
 	const int32 TeamSize = RSMatch::GetTeamSize();
-	const bool bBots = RSMatch::GetUseBots();
+	// в лобби ботов нет вовсе: там никто не воюет, а состав добирается
+	// заново при старте матча
+	const bool bBots = RSMatch::GetUseBots() && !ARSPlayerController::IsLobby();
 
 	for (int32 Side = 0; Side < 2; Side++)
 	{

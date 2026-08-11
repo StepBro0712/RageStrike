@@ -449,6 +449,17 @@ TSharedRef<SWidget> SRSCheatMenu::MakeLegitPage()
 
 			+ SVerticalBox::Slot().AutoHeight()
 			[
+				MakeSection(TEXT("ПО-ЧЕЛОВЕЧЕСКИ"),
+					SNew(SVerticalBox)
+					+ SVerticalBox::Slot().AutoHeight()[ MakeToggle(TEXT("Плавная наводка"), &ARSCharacter::bLegitAim) ]
+					+ SVerticalBox::Slot().AutoHeight()[ MakeCombo(TEXT("Включается"), &ARSCharacter::AimActivation,
+						{ TEXT("Всегда"), TEXT("При стрельбе"), TEXT("При прицеле") }) ]
+					+ SVerticalBox::Slot().AutoHeight()[ MakeSlider(TEXT("Сглаживание"), &ARSCharacter::AimSmooth, 0.f, 100.f, TEXT("%")) ]
+					+ SVerticalBox::Slot().AutoHeight()[ MakeSlider(TEXT("Время реакции"), &ARSCharacter::ReactionMs, 0.f, 500.f, TEXT(" мс")) ])
+			]
+
+			+ SVerticalBox::Slot().AutoHeight()
+			[
 				SNew(STextBlock)
 				.Text(FText::FromString(TEXT("Наводится только на тех, кого видно:\nсквозь стены прицел не уводится.")))
 				.Font(Font(9))
@@ -458,7 +469,34 @@ TSharedRef<SWidget> SRSCheatMenu::MakeLegitPage()
 
 		+ SHorizontalBox::Slot()
 		.FillWidth(1.f)
-		[ SNullWidget::NullWidget ];
+		.Padding(8.f, 0.f, 0.f, 0.f)
+		[
+			SNew(SVerticalBox)
+
+			+ SVerticalBox::Slot().AutoHeight()
+			[
+				MakeSection(TEXT("ТРИГГЕРБОТ"),
+					SNew(SVerticalBox)
+					+ SVerticalBox::Slot().AutoHeight()[ MakeToggle(TEXT("Включён"), &ARSCharacter::bTriggerbot) ]
+					+ SVerticalBox::Slot().AutoHeight()[ MakeSlider(TEXT("Время реакции"), &ARSCharacter::TriggerReactionMs, 0.f, 500.f, TEXT(" мс")) ]
+					+ SVerticalBox::Slot().AutoHeight()[ MakeSlider(TEXT("FOV"), &ARSCharacter::TriggerFov, 0.f, 20.f, TEXT("°")) ])
+			]
+
+			+ SVerticalBox::Slot().AutoHeight()
+			[
+				MakeSection(TEXT("ОТДАЧА"),
+					SNew(SVerticalBox)
+					+ SVerticalBox::Slot().AutoHeight()[ MakeSlider(TEXT("Контроль отдачи"), &ARSCharacter::RecoilControl, 0.f, 100.f, TEXT("%")) ])
+			]
+
+			+ SVerticalBox::Slot().AutoHeight()
+			[
+				SNew(STextBlock)
+				.Text(FText::FromString(TEXT("Контроль гасит долю подброса, а не всю отдачу:\nспрей остаётся живым, в отличие от «без отдачи».")))
+				.Font(Font(9))
+				.ColorAndOpacity(CMDim)
+			]
+		];
 }
 
 TSharedRef<SWidget> SRSCheatMenu::MakeVisualsPage()

@@ -1192,6 +1192,13 @@ void ARSCharacter::UpdateSkeletalViewModel()
 	}
 }
 
+void ARSCharacter::SetThirdPerson(bool bOn)
+{
+	bThirdPerson = bOn;
+	ApplyViewMode();
+	ApplyWeaponVisuals();
+}
+
 void ARSCharacter::ToggleView()
 {
 	bThirdPerson = !bThirdPerson;
@@ -1781,7 +1788,7 @@ void ARSCharacter::Tick(float DeltaTime)
 
 	if (bAimbot)
 	{
-		RunAimbot();
+		RunAimbot(DeltaTime);
 	}
 	if (bTriggerbot && !bFireHeld)
 	{
@@ -1857,14 +1864,57 @@ AActor* ARSCharacter::FindBestTarget(FVector& OutAimPoint) const
 	return Best;
 }
 
-void ARSCharacter::RunAimbot()
+void ARSCharacter::RunAimbot(float DeltaTime)
 {
 	FVector AimPoint;
-	if (FindBestTarget(AimPoint) && GetController())
+	AActor* Target = FindBestTarget(AimPoint);
+	if (!Target || !GetController())
 	{
-		const FVector CamLoc = Camera->GetComponentLocation();
-		GetController()->SetControlRotation((AimPoint - CamLoc).Rotation());
+		LastAimTarget = nullptr;
+		TargetSeenAt = -1.f;
+		return;
 	}
+
+	// Условие включения: рейдж работает всегда, легиту нужен либо огонь,
+	// либо прицеливание — иначе прицел ездит сам по себе всё время.
+	if (bLegitAim)
+	{
+		if ((AimActivation == 1 && !bFireHeld) || (AimActivation == 2 && !bAiming))
+		{
+			LastAimTarget = nullptr;
+			TargetSeenAt = -1.f;
+			return;
+		}
+	}
+
+	// Время реакции считаем от появления конкретной цели: сменилась —
+	// отсчёт начинается заново, как у живого игрока.
+	const float Now = GetWorld()->GetTimeSeconds();
+	if (LastAimTarget.Get() != Target)
+	{
+		LastAimTarget = Target;
+		TargetSeenAt = Now;
+	}
+	if (bLegitAim && Now - TargetSeenAt < ReactionMs * 0.001f)
+	{
+		return;
+	}
+
+	const FVector CamLoc = Camera->GetComponentLocation();
+	const FRotator Want = (AimPoint - CamLoc).Rotation();
+
+	if (!bLegitAim)
+	{
+		GetController()->SetControlRotation(Want);
+		return;
+	}
+
+	// Плавная подводка: чем выше сглаживание, тем медленнее прицел доходит
+	// до цели. Скорость обратна ползунку, поэтому 100 — почти незаметное
+	// подтягивание, а 0 — рывок как у рейджа.
+	const float Speed = FMath::Lerp(35.f, 1.5f, FMath::Clamp(AimSmooth / 100.f, 0.f, 1.f));
+	GetController()->SetControlRotation(
+		FMath::RInterpTo(GetControlRotation(), Want, DeltaTime, Speed));
 }
 
 FKey ARSCharacter::BindKey() const
@@ -2028,6 +2078,7 @@ namespace
 		{ TEXT("QuickSwitch"), &ARSCharacter::bQuickSwitch },
 		{ TEXT("HitSound"), &ARSCharacter::bHitSound },
 		{ TEXT("AirStrafe"), &ARSCharacter::bAirStrafe },
+		{ TEXT("LegitAim"), &ARSCharacter::bLegitAim },
 		{ TEXT("Chams"), &ARSCharacter::bChams },
 	};
 
@@ -2041,6 +2092,10 @@ namespace
 		{ TEXT("AntiAimSwing"), &ARSCharacter::AntiAimSwing },
 		{ TEXT("AntiAimPitch"), &ARSCharacter::AntiAimPitch },
 		{ TEXT("AntiAimSpin"), &ARSCharacter::AntiAimSpin },
+		{ TEXT("AimSmooth"), &ARSCharacter::AimSmooth },
+		{ TEXT("ReactionMs"), &ARSCharacter::ReactionMs },
+		{ TEXT("RecoilControl"), &ARSCharacter::RecoilControl },
+		{ TEXT("TriggerReactionMs"), &ARSCharacter::TriggerReactionMs },
 	};
 
 	const FIntField IntFields[] = {
@@ -2049,6 +2104,7 @@ namespace
 		{ TEXT("AimHitbox"), &ARSCharacter::AimHitbox },
 		{ TEXT("BindKey"), &ARSCharacter::BindKeyIndex },
 		{ TEXT("EspColor"), &ARSCharacter::EspColor },
+		{ TEXT("AimActivation"), &ARSCharacter::AimActivation },
 	};
 
 	const TCHAR* CheatSection = TEXT("Cheat");
@@ -2306,10 +2362,23 @@ void ARSCharacter::RunTriggerbot()
 	{
 		if (IsEnemyActor(Hit.GetActor()))
 		{
-			TryFireIfWorthIt();
+			// Время реакции: курок жмётся не в тот же кадр, когда цель
+			// пересекла прицел. Отсчёт с момента, как она там появилась.
+			const float Now = GetWorld()->GetTimeSeconds();
+			if (TriggerSeenAt < 0.f)
+			{
+				TriggerSeenAt = Now;
+			}
+			if (Now - TriggerSeenAt >= TriggerReactionMs * 0.001f)
+			{
+				TryFireIfWorthIt();
+			}
 			return;
 		}
 	}
+
+	// под прицелом никого — отсчёт реакции начнётся заново
+	TriggerSeenAt = -1.f;
 
 	// Дальше — стрельба по цели рядом с прицелом, а не строго под ним:
 	// в пределах TriggerFov. При нуле остаётся только точный луч выше.
@@ -2450,6 +2519,14 @@ void ARSCharacter::TryFire(bool bIgnoreCadence)
 	{
 		float KickPitch = 0.f, KickYaw = 0.f;
 		GetRecoilKick(CurrentWeapon, RecoilIndex, KickPitch, KickYaw);
+
+		// Контроль отдачи: гасим заданную долю подброса. В отличие от
+		// «без отдачи» это не выключает её целиком — ствол всё равно ведёт,
+		// просто слабее, и спрей остаётся отличимым от лазера.
+		const float Keep = 1.f - FMath::Clamp(RecoilControl / 100.f, 0.f, 1.f);
+		KickPitch *= Keep;
+		KickYaw *= Keep;
+
 		PunchTarget.X += KickPitch;
 		PunchTarget.Y += KickYaw;
 		RecoilIndex++;

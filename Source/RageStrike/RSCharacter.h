@@ -73,6 +73,19 @@ public:
 	int32 AimHitbox = 0;     // куда целиться: 0 голова, 1 грудь, 2 живот
 	float HitChance = 45.f;  // доля лучей в конусе разброса, которые должны попасть
 
+	// --- legit: то же наведение, но по-человечески ---
+	bool bLegitAim = false;        // подводить плавно, а не мгновенно
+	float AimSmooth = 50.f;        // 0 — рывком, 100 — очень медленно
+	float ReactionMs = 200.f;      // пауза после появления цели
+	int32 AimActivation = 1;       // 0 всегда, 1 при стрельбе, 2 при прицеле
+	float RecoilControl = 0.f;     // сколько процентов отдачи гасить
+	float TriggerReactionMs = 200.f;
+
+	// служебное для задержек
+	TWeakObjectPtr<AActor> LastAimTarget;
+	float TargetSeenAt = -1.f;
+	float TriggerSeenAt = -1.f;
+
 	// бэктрек: стрельба по тому, где цель была недавно
 	bool bBacktrack = false;
 	float BacktrackMs = 200.f;
@@ -271,6 +284,8 @@ public:
 	// правка настройки из оверлея: Delta -1 или +1, у переключателей знак
 	// не важен. Номера настроек совпадают с порядком строк в оверлее.
 	void ApplyCheatSetting(int32 Id, int32 Delta);
+	// вид от третьего лица снаружи: в лобби на персонажа смотрят со стороны
+	void SetThirdPerson(bool bOn);
 	int32 BuyCategory = -1;      // -1 — выбор категории
 	bool bScoreboardOpen = false;
 
@@ -441,7 +456,7 @@ private:
 	// цель для читов — любой живой противник: бот или игрок
 	AActor* FindBestTarget(FVector& OutAimPoint) const;
 	bool IsEnemyActor(const AActor* Other) const;
-	void RunAimbot();
+	void RunAimbot(float DeltaTime);
 	void RunTriggerbot();
 	// bIgnoreCadence — выстрел вне очереди, для двойного выстрела
 	void TryFire(bool bIgnoreCadence = false);

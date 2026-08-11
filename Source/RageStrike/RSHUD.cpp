@@ -297,18 +297,33 @@ void ARSHUD::DrawSniperScope(const ARSCharacter* Player)
 	const float CY = H * 0.5f;
 	const float R = FMath::Min(W, H) * 0.48f;
 
-	DrawRect(FLinearColor::Black, 0.f, 0.f, CX - R, H);
-	DrawRect(FLinearColor::Black, CX + R, 0.f, W - CX - R, H);
-	DrawRect(FLinearColor::Black, CX - R, 0.f, 2.f * R, CY - R);
-	DrawRect(FLinearColor::Black, CX - R, CY + R, 2.f * R, H - CY - R);
+	// Заливаем всё, кроме круга линзы. Канвас не умеет круглую маску, поэтому
+	// идём построчно: на каждой полосе считаем полуширину круга и закрываем
+	// чёрным всё слева и справа от неё. Раньше закрашивались только четыре
+	// прямоугольника, и по углам оставалась видна картинка за окружностью.
+	const float Step = 2.f;
+	for (float Y = 0.f; Y < H; Y += Step)
+	{
+		const float Dy = (Y + Step * 0.5f) - CY;
+		const float Half = (FMath::Abs(Dy) >= R) ? 0.f : FMath::Sqrt(R * R - Dy * Dy);
 
-	const int32 Seg = 64;
+		if (Half <= 0.f)
+		{
+			DrawRect(FLinearColor::Black, 0.f, Y, W, Step);
+			continue;
+		}
+		DrawRect(FLinearColor::Black, 0.f, Y, CX - Half, Step);
+		DrawRect(FLinearColor::Black, CX + Half, Y, W - CX - Half, Step);
+	}
+
+	// тонкая окантовка линзы, чтобы край не выглядел рваным от шага заливки
+	const int32 Seg = 96;
 	for (int32 i = 0; i < Seg; i++)
 	{
 		const float A0 = 2.f * PI * i / Seg;
 		const float A1 = 2.f * PI * (i + 1) / Seg;
 		DrawLine(CX + R * FMath::Cos(A0), CY + R * FMath::Sin(A0),
-			CX + R * FMath::Cos(A1), CY + R * FMath::Sin(A1), FLinearColor::Black, 6.f);
+			CX + R * FMath::Cos(A1), CY + R * FMath::Sin(A1), FLinearColor::Black, 3.f);
 	}
 
 	DrawLine(CX - R, CY, CX + R, CY, FLinearColor::Black, 1.5f);
