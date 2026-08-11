@@ -34,4 +34,25 @@ namespace RSOptions
 	int32 GetPerfMode();
 	void SetPerfMode(int32 Value);
 	const TCHAR* PerfModeName(int32 Value);
+
+	float GetFov();               // обзор, 70..120
+	void SetFov(float Value);
+
+	float GetMusicVolume();       // музыка отдельно от эффектов
+	void SetMusicVolume(float Value);
+	float GetFxVolume();
+	void SetFxVolume(float Value);
+
+	float GetVmOffset();          // сдвиг оружия вправо-влево, -8..8
+	void SetVmOffset(float Value);
+	float GetVmOffsetZ();         // вверх-вниз
+	void SetVmOffsetZ(float Value);
+	float GetVmOffsetX();         // и вперёд-назад, ближе к камере или дальше
+	void SetVmOffsetX(float Value);
+	bool GetHideViewmodel();      // убрать оружие с экрана
+	void SetHideViewmodel(bool bValue);
+
+	float GetGamma();             // яркость, 1.6..3.2
+	void SetGamma(float Value);
+	void ApplyGamma();            // разово при старте и после правки
 }

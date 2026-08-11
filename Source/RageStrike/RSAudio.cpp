@@ -1,4 +1,5 @@
 #include "RSAudio.h"
+#include "RSMatchSettings.h"
 #include "Sound/SoundBase.h"
 #include "UObject/SoftObjectPath.h"
 #include "Engine/Engine.h"
@@ -118,8 +119,11 @@ namespace RSAudio
 		{
 			return;
 		}
+		// Громкость эффектов отдельная от музыки: одним ползунком нельзя было
+		// приглушить выстрелы, не убив заодно и музыку в меню.
 		UGameplayStatics::PlaySoundAtLocation(WorldContext, Sound, Location,
-			FRotator::ZeroRotator, Volume * (bFromOther ? 3.f : 1.f), 1.f, 0.f,
+			FRotator::ZeroRotator,
+			Volume * (bFromOther ? 3.f : 1.f) * RSOptions::GetFxVolume(), 1.f, 0.f,
 			GetAttenuation(Range));
 	}
 

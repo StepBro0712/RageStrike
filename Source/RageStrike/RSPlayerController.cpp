@@ -4,6 +4,7 @@
 #include "RSMenuCamera.h"
 #include "RSGameMode.h"
 #include "RSAudio.h"
+#include "RSMatchSettings.h"
 #include "Components/AudioComponent.h"
 #include "Engine/Engine.h"
 #include "Engine/GameViewportClient.h"
@@ -35,6 +36,9 @@ void ARSPlayerController::BeginPlay()
 	{
 		RSAudio::SetMasterVolume(FMath::Clamp(Value, 0.f, 1.f));
 	}
+
+	// яркость держит движок, а не GameUserSettings — ставим её при входе
+	RSOptions::ApplyGamma();
 
 	// ник: сохранённый или имя пользователя Windows как заготовка
 	FString Nick;
@@ -154,7 +158,7 @@ void ARSPlayerController::OpenMenu(bool bStartup)
 	if (!MenuMusic)
 	{
 		MenuMusic = UGameplayStatics::SpawnSound2D(this,
-			RSAudio::Get(RSAudio::ESound::MusicMenu), 0.45f, 1.f, 0.f, nullptr, false, false);
+			RSAudio::Get(RSAudio::ESound::MusicMenu), 0.45f * RSOptions::GetMusicVolume(), 1.f, 0.f, nullptr, false, false);
 	}
 
 	// паузу ставим только на стартовом меню: в бою по Esc игра идёт дальше

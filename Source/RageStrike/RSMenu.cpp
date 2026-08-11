@@ -921,7 +921,108 @@ TSharedRef<SWidget> SRSMenu::MakeVideoPanel()
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 8.f, 0.f, 2.f)
 		[
 			SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Regular", 13))
-			.Text(FText::FromString(TEXT("Чувствительность мыши")))
+			.Text_Lambda([]() { return FText::FromString(FString::Printf(
+				TEXT("Громкость музыки — %d%%"), FMath::RoundToInt(RSOptions::GetMusicVolume() * 100.f))); })
+		]
+		+ SVerticalBox::Slot().AutoHeight()
+		[
+			SNew(SSlider)
+			.Value_Lambda([]() { return RSOptions::GetMusicVolume(); })
+			.OnValueChanged_Lambda([](float V) { RSOptions::SetMusicVolume(V); })
+		]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 8.f, 0.f, 2.f)
+		[
+			SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Regular", 13))
+			.Text_Lambda([]() { return FText::FromString(FString::Printf(
+				TEXT("Громкость эффектов — %d%%"), FMath::RoundToInt(RSOptions::GetFxVolume() * 100.f))); })
+		]
+		+ SVerticalBox::Slot().AutoHeight()
+		[
+			SNew(SSlider)
+			.Value_Lambda([]() { return RSOptions::GetFxVolume(); })
+			.OnValueChanged_Lambda([](float V) { RSOptions::SetFxVolume(V); })
+		]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 8.f, 0.f, 2.f)
+		[
+			SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Regular", 13))
+			.Text_Lambda([]() { return FText::FromString(FString::Printf(
+				TEXT("Обзор — %d°"), FMath::RoundToInt(RSOptions::GetFov()))); })
+		]
+		+ SVerticalBox::Slot().AutoHeight()
+		[
+			SNew(SSlider)
+			.Value_Lambda([]() { return (RSOptions::GetFov() - 70.f) / 50.f; })
+			.OnValueChanged_Lambda([](float V) { RSOptions::SetFov(70.f + V * 50.f); })
+		]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 8.f, 0.f, 2.f)
+		[
+			SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Regular", 13))
+			.Text_Lambda([]() { return FText::FromString(FString::Printf(
+				TEXT("Яркость — %.1f"), RSOptions::GetGamma())); })
+		]
+		+ SVerticalBox::Slot().AutoHeight()
+		[
+			SNew(SSlider)
+			.Value_Lambda([]() { return (RSOptions::GetGamma() - 1.6f) / 1.6f; })
+			.OnValueChanged_Lambda([](float V) { RSOptions::SetGamma(1.6f + V * 1.6f); })
+		]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 8.f, 0.f, 2.f)
+		[
+			SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Regular", 13))
+			.Text_Lambda([]() { return FText::FromString(FString::Printf(
+				TEXT("Оружие вправо-влево — %.0f"), RSOptions::GetVmOffset())); })
+		]
+		+ SVerticalBox::Slot().AutoHeight()
+		[
+			SNew(SSlider)
+			.Value_Lambda([]() { return (RSOptions::GetVmOffset() + 8.f) / 16.f; })
+			.OnValueChanged_Lambda([](float V) { RSOptions::SetVmOffset(-8.f + V * 16.f); })
+		]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 8.f, 0.f, 2.f)
+		[
+			SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Regular", 13))
+			.Text_Lambda([]() { return FText::FromString(FString::Printf(
+				TEXT("Оружие вверх-вниз — %.0f"), RSOptions::GetVmOffsetZ())); })
+		]
+		+ SVerticalBox::Slot().AutoHeight()
+		[
+			SNew(SSlider)
+			.Value_Lambda([]() { return (RSOptions::GetVmOffsetZ() + 8.f) / 16.f; })
+			.OnValueChanged_Lambda([](float V) { RSOptions::SetVmOffsetZ(-8.f + V * 16.f); })
+		]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 8.f, 0.f, 2.f)
+		[
+			SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Regular", 13))
+			.Text_Lambda([]() { return FText::FromString(FString::Printf(
+				TEXT("Оружие вперёд-назад — %.0f"), RSOptions::GetVmOffsetX())); })
+		]
+		+ SVerticalBox::Slot().AutoHeight()
+		[
+			SNew(SSlider)
+			.Value_Lambda([]() { return (RSOptions::GetVmOffsetX() + 8.f) / 16.f; })
+			.OnValueChanged_Lambda([](float V) { RSOptions::SetVmOffsetX(-8.f + V * 16.f); })
+		]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 8.f)
+		[
+			MakeCycleRow(FText::FromString(TEXT("Оружие на экране")),
+				TAttribute<FText>::Create([]() {
+					return FText::FromString(RSOptions::GetHideViewmodel() ? TEXT("скрыто") : TEXT("видно")); }),
+				[]() { RSOptions::SetHideViewmodel(!RSOptions::GetHideViewmodel()); },
+				[]() { RSOptions::SetHideViewmodel(!RSOptions::GetHideViewmodel()); })
+		]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 8.f, 0.f, 2.f)
+		[
+			SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Regular", 13))
+			.Text_Lambda([this]() { return FText::FromString(FString::Printf(
+				TEXT("Чувствительность мыши — %.2f"), PC.IsValid() ? PC->MouseSens : 1.f)); })
 		]
 		+ SVerticalBox::Slot().AutoHeight()
 		[

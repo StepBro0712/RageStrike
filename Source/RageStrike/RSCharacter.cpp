@@ -9,6 +9,7 @@
 #include "RSFireZone.h"
 #include "RSHUD.h"
 #include "RSMaps.h"
+#include "RSMatchSettings.h"
 #include "RSAudio.h"
 #include "RSTracer.h"
 #include "RSViewModel.h"
@@ -934,7 +935,7 @@ void ARSCharacter::RequestWeapon(ERSWeapon NewWeapon)
 	bReloading = false;
 	bAiming = false;
 	bAimingNow = false;
-	Camera->SetFieldOfView(90.f);
+	Camera->SetFieldOfView(RSOptions::GetFov());
 	GetWorldTimerManager().ClearTimer(ReloadTimer);
 	ApplyWeaponVisuals();
 
@@ -1158,8 +1159,8 @@ void ARSCharacter::ApplyWeaponVisuals()
 	}
 
 	ArmsMesh->SetVisibility(bUseArms && !bThirdPerson);
-	GunMesh->SetVisibility(!bThirdPerson && !bUsingSkeletalVM);
-	FPGun->SetVisibility(bUsingSkeletalVM);
+	GunMesh->SetVisibility(!bThirdPerson && !bUsingSkeletalVM && !RSOptions::GetHideViewmodel());
+	FPGun->SetVisibility(bUsingSkeletalVM && !RSOptions::GetHideViewmodel());
 	TPGunMesh->SetOwnerNoSee(!bThirdPerson);
 }
 
@@ -1498,11 +1499,11 @@ void ARSCharacter::StopAim()
 {
 	bAiming = false;
 	bAimingNow = false;
-	Camera->SetFieldOfView(90.f);
+	Camera->SetFieldOfView(RSOptions::GetFov());
 	// показываем ровно то, что было до прицеливания: иначе рядом со скелетной
 	// вьюмоделью всплывал ещё и статик-меш, и оружие двоилось
-	GunMesh->SetVisibility(!bThirdPerson && !bUsingSkeletalVM);
-	FPGun->SetVisibility(bUsingSkeletalVM && !bThirdPerson);
+	GunMesh->SetVisibility(!bThirdPerson && !bUsingSkeletalVM && !RSOptions::GetHideViewmodel());
+	FPGun->SetVisibility(bUsingSkeletalVM && !bThirdPerson && !RSOptions::GetHideViewmodel());
 }
 
 void ARSCharacter::Reload()
@@ -1686,7 +1687,7 @@ void ARSCharacter::Tick(float DeltaTime)
 		if (bWantMusic && !BuyMusic)
 		{
 			BuyMusic = UGameplayStatics::SpawnSound2D(this,
-				RSAudio::Get(RSAudio::ESound::MusicBuy), 0.5f, 1.f, 0.f, nullptr, false, false);
+				RSAudio::Get(RSAudio::ESound::MusicBuy), 0.5f * RSOptions::GetMusicVolume(), 1.f, 0.f, nullptr, false, false);
 		}
 		else if (!bWantMusic && BuyMusic)
 		{
@@ -1737,6 +1738,18 @@ void ARSCharacter::Tick(float DeltaTime)
 
 	RecordEnemyHistory();
 	UpdateChams();
+
+	// Обзор применяем каждый кадр, пока не смотрим в прицел: раньше он
+	// ставился только при выходе из прицеливания, и ползунок в меню
+	// не менял ничего, пока не прицелишься и не отпустишь.
+	if (IsLocallyControlled() && Camera && !bAimingNow)
+	{
+		const float Want = RSOptions::GetFov();
+		if (!FMath::IsNearlyEqual(Camera->FieldOfView, Want, 0.1f))
+		{
+			Camera->SetFieldOfView(Want);
+		}
+	}
 
 	// Автоперезарядка: запускаем после выстрела, а не внутри него — иначе
 	// перезарядка началась бы до того, как выстрел успел отработать.
@@ -2694,6 +2707,12 @@ void ARSCharacter::UpdateViewmodel(float DeltaTime)
 	{
 		Offset.Z -= FMath::Sin((Now - LandDipStart) / 0.25f * PI) * 3.f;
 	}
+
+	// Сдвиг вьюмодели из настроек кладём здесь, а не при выдаче оружия:
+	// так ползунок в меню двигает ствол сразу, а не после смены слота.
+	Offset.X += RSOptions::GetVmOffsetX();
+	Offset.Y += RSOptions::GetVmOffset();
+	Offset.Z += RSOptions::GetVmOffsetZ();
 
 	Visual->SetRelativeLocation(GunBaseLoc + Offset);
 	Visual->SetRelativeRotation(GunBaseRot + RotOffset);
