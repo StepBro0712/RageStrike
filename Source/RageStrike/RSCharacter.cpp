@@ -56,6 +56,81 @@ FString RSCombatantName(const AActor* Who)
 	return TEXT("?");
 }
 
+uint8 RSComputeKillFlags(const AActor* Killer, const AActor* Victim, bool bHeadshot)
+{
+	uint8 Flags = bHeadshot ? RSKill::Headshot : 0;
+	if (!Killer || !Victim || Killer == Victim)
+	{
+		return Flags;
+	}
+
+	const UWorld* World = Killer->GetWorld();
+	if (!World)
+	{
+		return Flags;
+	}
+	const float Now = World->GetTimeSeconds();
+
+	// Ослепление и «без прицела» берутся из состояния убийцы. У игрока и бота
+	// это разные поля: игрок хранит момент конца засветки, бот — свой BlindUntil.
+	if (const ARSCharacter* KC = Cast<ARSCharacter>(Killer))
+	{
+		if (Now < KC->FlashEndTime)
+		{
+			Flags |= RSKill::Blind;
+		}
+		if (RSWeapons::Get(KC->CurrentWeapon).Mesh == ERSMeshKind::Sniper && !KC->bAimingNow)
+		{
+			Flags |= RSKill::Noscope;
+		}
+	}
+	else if (const ARSBot* KB = Cast<ARSBot>(Killer))
+	{
+		if (Now < KB->BlindUntil)
+		{
+			Flags |= RSKill::Blind;
+		}
+		// боты прицелом не пользуются, поэтому Noscope им не ставим:
+		// иначе значок висел бы на каждом их убийстве снайперкой
+	}
+
+	// Дым опознаём по актору-гранате, а не по самому факту помехи: канал
+	// камеры блокирует и обычная геометрия, из-за чего значок дыма вылезал
+	// на убийствах, где никакого дыма не было — хватало задетого угла стены
+	// или ступеньки. Дымовые сферы висят компонентами на ARSGrenade, поэтому
+	// достаточно проверить владельца попадания.
+	//
+	// Трасса идёт от глаз, а не от груди: выстрел шёл именно оттуда, и над
+	// низким укрытием линии от груди и от глаз расходятся.
+	FVector From = Killer->GetActorLocation() + FVector(0.f, 0.f, 50.f);
+	if (const APawn* KillerPawn = Cast<APawn>(Killer))
+	{
+		From = KillerPawn->GetPawnViewLocation();
+	}
+	const FVector To = Victim->GetActorLocation();
+
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(RSKillSmoke), false, Killer);
+	Params.AddIgnoredActor(Victim);
+	Params.bTraceComplex = true;
+
+	// Мультитрасса, а не одиночная: если первой на пути окажется геометрия,
+	// одиночная остановится на ней и дым за ней остался бы незамеченным.
+	TArray<FHitResult> Hits;
+	if (World->LineTraceMultiByChannel(Hits, From, To, ECC_Camera, Params))
+	{
+		for (const FHitResult& H : Hits)
+		{
+			if (Cast<ARSGrenade>(H.GetActor()))
+			{
+				Flags |= RSKill::Smoke;
+				break;
+			}
+		}
+	}
+
+	return Flags;
+}
+
 ARSCharacter::ARSCharacter()
 {
 	PrimaryActorTick.bCanEverTick = true;
@@ -3126,6 +3201,8 @@ float ARSCharacter::TakeDamage(float DamageAmount, FDamageEvent const& DamageEve
 		Deaths++;
 		FString KillerName = TEXT("?");
 		uint8 KillerTeam = (uint8)ERSTeam::CT;
+		// COUNT = неизвестно: killfeed нарисует текстом, а не иконкой
+		uint8 KillerWeapon = (uint8)ERSWeapon::COUNT;
 		if (ARSCharacter* Killer = Cast<ARSCharacter>(KillerActor))
 		{
 			if (Killer != this)
@@ -3139,6 +3216,7 @@ float ARSCharacter::TakeDamage(float DamageAmount, FDamageEvent const& DamageEve
 				WeaponName = Killer->GetWeaponName();
 			}
 			KillerTeam = (uint8)Killer->Team;
+			KillerWeapon = (uint8)Killer->CurrentWeapon;
 		}
 		else if (ARSBot* BotKiller = Cast<ARSBot>(KillerActor))
 		{
@@ -3149,11 +3227,13 @@ float ARSCharacter::TakeDamage(float DamageAmount, FDamageEvent const& DamageEve
 				WeaponName = RSWeapons::Get(BotKiller->Weapon).Name;
 			}
 			KillerTeam = (uint8)BotKiller->Team;
+			KillerWeapon = (uint8)BotKiller->Weapon;
 		}
 		if (ARSGameState* GS = GetWorld()->GetGameState<ARSGameState>())
 		{
 			GS->MulticastAddKill(KillerName, RSCombatantName(this), WeaponName,
-				bLastHitHeadshot, KillerTeam, (uint8)Team);
+				bLastHitHeadshot, KillerTeam, (uint8)Team, KillerWeapon,
+				RSComputeKillFlags(KillerActor, this, bLastHitHeadshot));
 		}
 		bLastHitHeadshot = false;
 		Die();

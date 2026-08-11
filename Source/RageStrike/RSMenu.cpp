@@ -12,6 +12,8 @@
 #include "Misc/App.h"
 #include "HAL/PlatformProcess.h"
 #include "Styling/CoreStyle.h"
+#include "Styling/SlateTypes.h"
+#include "Styling/SlateBrush.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/SOverlay.h"
 #include "Widgets/Layout/SBox.h"
@@ -28,7 +30,9 @@ static const FIntPoint GResolutions[] = { {1280, 720}, {1600, 900}, {1920, 1080}
 namespace
 {
 	const FLinearColor MenuBarBg(0.f, 0.f, 0.f, 0.62f);
-	const FLinearColor MenuPanelBg(0.02f, 0.03f, 0.05f, 0.82f);
+	// плотнее прежних 0.82: на светлой карте панель просвечивала и читалась
+	// серой, а не тёмной, из-за чего терялся контраст с текстом
+	const FLinearColor MenuPanelBg(0.02f, 0.03f, 0.05f, 0.93f);
 	const FLinearColor MenuAccent(0.98f, 0.68f, 0.15f);   // жёлтый CS2
 	const FLinearColor MenuGreen(0.20f, 0.85f, 0.35f);
 	const FLinearColor MenuDim(0.92f, 0.94f, 0.96f, 0.55f);
@@ -41,15 +45,79 @@ static UGameUserSettings* GetUS()
 	return GEngine ? GEngine->GetGameUserSettings() : nullptr;
 }
 
-TSharedRef<SWidget> SRSMenu::MakeButton(const FText& Label, TFunction<void()> OnClick)
+namespace
 {
+	// Плоский стиль кнопки в духе CS2.
+	//
+	// Тонируем именно БЕЛЫЙ браш: попытка покрасить тёмный штатный браш через
+	// ButtonColorAndOpacity даёт грязный оливковый вместо жёлтого — на эти
+	// грабли тут уже наступали. Заодно через FButtonStyle бесплатно
+	// получаются состояния наведения и нажатия, которых у меню не было вовсе.
+	const FButtonStyle& MenuFlatStyle(const FLinearColor& Base,
+		const FLinearColor& Hover, const FLinearColor& Press, int32 Key)
+	{
+		static TMap<int32, FButtonStyle> Styles;
+		if (FButtonStyle* Found = Styles.Find(Key))
+		{
+			return *Found;
+		}
+
+		const FSlateBrush* White = FCoreStyle::Get().GetBrush("WhiteBrush");
+		FSlateBrush N = *White; N.TintColor = FSlateColor(Base);
+		FSlateBrush H = *White; H.TintColor = FSlateColor(Hover);
+		FSlateBrush P = *White; P.TintColor = FSlateColor(Press);
+
+		FButtonStyle Style;
+		Style.SetNormal(N).SetHovered(H).SetPressed(P);
+		// штатный стиль сдвигает содержимое при нажатии на пиксель вниз —
+		// на плоской кнопке это читается как дрожание
+		Style.SetNormalPadding(FMargin(0.f));
+		Style.SetPressedPadding(FMargin(0.f));
+
+		return Styles.Add(Key, Style);
+	}
+}
+
+TSharedRef<SWidget> SRSMenu::MakeButton(const FText& Label, TFunction<void()> OnClick,
+	ERSBtn Kind)
+{
+	FLinearColor Base, Hover, Press, Text;
+	switch (Kind)
+	{
+	case ERSBtn::Primary:
+		Base  = MenuAccent;
+		Hover = FLinearColor(1.f, 0.78f, 0.32f);
+		Press = FLinearColor(0.82f, 0.56f, 0.10f);
+		// на жёлтом фоне только тёмный текст даёт нужный контраст
+		Text  = FLinearColor(0.06f, 0.05f, 0.02f);
+		break;
+	case ERSBtn::Danger:
+		Base  = FLinearColor(0.28f, 0.07f, 0.06f, 0.95f);
+		Hover = FLinearColor(0.52f, 0.12f, 0.10f, 0.98f);
+		Press = FLinearColor(0.20f, 0.05f, 0.04f, 1.f);
+		Text  = FLinearColor(1.f, 0.62f, 0.55f);
+		break;
+	default:
+		Base  = FLinearColor(0.09f, 0.11f, 0.14f, 0.92f);
+		Hover = FLinearColor(0.16f, 0.19f, 0.24f, 0.96f);
+		Press = FLinearColor(0.06f, 0.07f, 0.09f, 1.f);
+		Text  = FLinearColor(0.94f, 0.96f, 0.98f);
+		break;
+	}
+
+	const int32 Key = (int32)Kind;
+	const bool bPrimary = (Kind == ERSBtn::Primary);
+
 	return SNew(SButton)
+		.ButtonStyle(&MenuFlatStyle(Base, Hover, Press, Key))
 		.HAlign(HAlign_Center)
-		.ContentPadding(FMargin(0.f, 8.f))
+		.VAlign(VAlign_Center)
+		.ContentPadding(FMargin(20.f, bPrimary ? 16.f : 12.f))
 		.OnClicked_Lambda([OnClick]() { OnClick(); return FReply::Handled(); })
 		[
 			SNew(STextBlock)
-			.Font(FCoreStyle::GetDefaultFontStyle("Bold", 14))
+			.Font(FCoreStyle::GetDefaultFontStyle("Bold", bPrimary ? 18 : 14))
+			.ColorAndOpacity(FSlateColor(Text))
 			.Text(Label)
 		];
 }
@@ -618,31 +686,34 @@ TSharedRef<SWidget> SRSMenu::MakePlayPanel()
 
 			// В матче тренировку не предлагаем: там нужно либо вернуться в бой,
 			// либо уйти в сеть, либо закончить матч и выйти в лобби.
-			+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 10.f)
+			// В лобби главное действие — тренировка, в матче — вернуться в бой.
+			// Оно и красится как главное, остальные идут вторым весом.
+			+ SVerticalBox::Slot().AutoHeight()
 			[
 				SNew(SBox)
 				.Visibility(ARSPlayerController::IsLobby() ? EVisibility::Visible : EVisibility::Collapsed)
 				[
-					MakeButton(FText::FromString(TEXT("ТРЕНИРОВКА")), [this]() { PlaySection = 1; })
+					MakeButton(FText::FromString(TEXT("ТРЕНИРОВКА")), [this]() { PlaySection = 1; },
+						ERSBtn::Primary)
 				]
 			]
 
-			+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 10.f)
+			+ SVerticalBox::Slot().AutoHeight()
 			[
 				SNew(SBox)
 				.Visibility(ARSPlayerController::IsLobby() ? EVisibility::Collapsed : EVisibility::Visible)
 				[
 					SNew(SVerticalBox)
 
-					+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)
+					+ SVerticalBox::Slot().AutoHeight()
 					[
 						MakeButton(FText::FromString(TEXT("ПРОДОЛЖИТЬ")), [this]()
 						{
 							if (PC.IsValid()) { PC->CloseMenu(); }
-						})
+						}, ERSBtn::Primary)
 					]
 
-					+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)
+					+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 6.f, 0.f, 0.f)
 					[
 						MakeButton(FText::FromString(TEXT("ВЫЙТИ В ЛОББИ")), [this]()
 						{
@@ -652,7 +723,10 @@ TSharedRef<SWidget> SRSMenu::MakePlayPanel()
 				]
 			]
 
-			+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f, 0.f, 10.f)
+			// Подпись прижата к своей кнопке сверху и отделена от следующей
+			// снизу: раньше отступы были равными и было не понять, к чему
+			// относится строка.
+			+ SVerticalBox::Slot().AutoHeight().Padding(2.f, 6.f, 0.f, 0.f)
 			[
 				SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Regular", 11))
 				.AutoWrapText(true)
@@ -661,12 +735,12 @@ TSharedRef<SWidget> SRSMenu::MakePlayPanel()
 				.Text(FText::FromString(TEXT("Матч против ботов: карта, сторона и правила")))
 			]
 
-			+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 10.f)
+			+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 22.f, 0.f, 0.f)
 			[
 				MakeButton(FText::FromString(TEXT("СЕТЕВАЯ ИГРА")), [this]() { PlaySection = 2; })
 			]
 
-			+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)
+			+ SVerticalBox::Slot().AutoHeight().Padding(2.f, 6.f, 0.f, 0.f)
 			[
 				SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Regular", 11))
 				.AutoWrapText(true)
@@ -1424,24 +1498,50 @@ void SRSMenu::Construct(const FArguments& InArgs)
 		[
 			SNew(SBox).WidthOverride(540.f)
 			[
-				SNew(SBorder)
-				.BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush"))
-				.BorderBackgroundColor(MenuPanelBg)
-				.Padding(FMargin(28.f, 24.f))
+				SNew(SVerticalBox)
+
+				// Жёлтая кромка сверху: панель больше не безымянный
+				// полупрозрачный блок, а карточка с явной границей.
+				+ SVerticalBox::Slot().AutoHeight()
 				[
-					SNew(SWidgetSwitcher)
-					.WidgetIndex_Lambda([this]() { return ActiveTab; })
-					+ SWidgetSwitcher::Slot()[ MakePlayPanel() ]
-					+ SWidgetSwitcher::Slot()[ MakeSettingsPanel() ]
-					+ SWidgetSwitcher::Slot()[ MakeArsenalPanel() ]
-					+ SWidgetSwitcher::Slot()[ MakeNewsPanel() ]
-					+ SWidgetSwitcher::Slot()[ MakeInventoryPanel() ]
+					SNew(SBox).HeightOverride(3.f)
+					[
+						SNew(SBorder)
+						.BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush"))
+						.BorderBackgroundColor(MenuAccent)
+					]
+				]
+
+				// внешняя рамка в один пиксель делается вложением: у SBorder
+				// нет отдельной толщины обводки
+				+ SVerticalBox::Slot().AutoHeight()
+				[
+					SNew(SBorder)
+					.BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush"))
+					.BorderBackgroundColor(FLinearColor(1.f, 1.f, 1.f, 0.10f))
+					.Padding(FMargin(1.f))
+					[
+						SNew(SBorder)
+						.BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush"))
+						.BorderBackgroundColor(MenuPanelBg)
+						.Padding(FMargin(28.f, 24.f))
+						[
+							SNew(SWidgetSwitcher)
+							.WidgetIndex_Lambda([this]() { return ActiveTab; })
+							+ SWidgetSwitcher::Slot()[ MakePlayPanel() ]
+							+ SWidgetSwitcher::Slot()[ MakeSettingsPanel() ]
+							+ SWidgetSwitcher::Slot()[ MakeArsenalPanel() ]
+							+ SWidgetSwitcher::Slot()[ MakeNewsPanel() ]
+							+ SWidgetSwitcher::Slot()[ MakeInventoryPanel() ]
+						]
+					]
 				]
 			]
 		]
 
-		// карточка игрока внизу по центру
-		+ SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Bottom).Padding(0.f, 0.f, 0.f, 34.f)
+		// Карточка игрока — под панелью и по её левому краю. По центру внизу
+		// она висела отдельным островом, никак не связанным с колонкой меню.
+		+ SOverlay::Slot().HAlign(HAlign_Left).VAlign(VAlign_Bottom).Padding(90.f, 0.f, 0.f, 34.f)
 		[
 			MakePlayerCard()
 		]

@@ -40,9 +40,11 @@ namespace RSIcons
 			}
 		}
 
-		UTexture2D* LoadIcon(const TCHAR* Name)
+		// Загрузка по полному имени ассета. Иконки оружия названы Icon_<...>,
+		// а значки killfeed — KF<...>, поэтому префикс задаёт вызывающий.
+		UTexture2D* LoadAsset(const TCHAR* AssetName)
 		{
-			if (!Name)
+			if (!AssetName)
 			{
 				return nullptr;
 			}
@@ -50,7 +52,7 @@ namespace RSIcons
 			static TMap<FString, UTexture2D*> Cache;
 			static TSet<FString> Tried;
 
-			const FString Key(Name);
+			const FString Key(AssetName);
 			if (UTexture2D** Found = Cache.Find(Key))
 			{
 				return *Found;
@@ -61,7 +63,7 @@ namespace RSIcons
 			}
 			Tried.Add(Key);
 
-			const FString Path = FString::Printf(TEXT("/Game/UI/Icons/Icon_%s.Icon_%s"), Name, Name);
+			const FString Path = FString::Printf(TEXT("/Game/UI/Icons/%s.%s"), AssetName, AssetName);
 			if (UTexture2D* Tex = LoadObject<UTexture2D>(nullptr, *Path))
 			{
 				Tex->AddToRoot();
@@ -70,9 +72,20 @@ namespace RSIcons
 			}
 			return nullptr;
 		}
+
+		// иконки оружия и снаряжения импортированы с префиксом Icon_
+		UTexture2D* LoadIcon(const TCHAR* Name)
+		{
+			return Name ? LoadAsset(*FString::Printf(TEXT("Icon_%s"), Name)) : nullptr;
+		}
 	}
 
 	UTexture2D* ForWeapon(ERSWeapon Weapon) { return LoadIcon(WeaponIconName(Weapon)); }
 	UTexture2D* Kevlar()                    { return LoadIcon(TEXT("Kevlar")); }
 	UTexture2D* Helmet()                    { return LoadIcon(TEXT("Helmet")); }
+
+	UTexture2D* KillHeadshot()              { return LoadAsset(TEXT("KFHeadshot")); }
+	UTexture2D* KillNoscope()               { return LoadAsset(TEXT("KFNoscope")); }
+	UTexture2D* KillBlind()                 { return LoadAsset(TEXT("KFBlind")); }
+	UTexture2D* KillSmoke()                 { return LoadAsset(TEXT("KFSmoke")); }
 }

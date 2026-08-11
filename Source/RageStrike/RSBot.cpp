@@ -737,6 +737,8 @@ float ARSBot::TakeDamage(float DamageAmount, FDamageEvent const& DamageEvent,
 		// килл на счёт того, кто стрелял: игрока или бота
 		FString KillerName = TEXT("?");
 		uint8 KillerTeam = (uint8)ERSTeam::CT;
+		// COUNT = неизвестно: killfeed нарисует текстом, а не иконкой
+		uint8 KillerWeapon = (uint8)ERSWeapon::COUNT;
 		if (ARSCharacter* Killer = Cast<ARSCharacter>(KillerActor))
 		{
 			Killer->Kills++;
@@ -747,6 +749,7 @@ float ARSBot::TakeDamage(float DamageAmount, FDamageEvent const& DamageEvent,
 				WeaponName = Killer->GetWeaponName();
 			}
 			KillerTeam = (uint8)Killer->Team;
+			KillerWeapon = (uint8)Killer->CurrentWeapon;
 		}
 		else if (ARSBot* BotKiller = Cast<ARSBot>(KillerActor))
 		{
@@ -757,11 +760,13 @@ float ARSBot::TakeDamage(float DamageAmount, FDamageEvent const& DamageEvent,
 				WeaponName = RSWeapons::Get(BotKiller->Weapon).Name;
 			}
 			KillerTeam = (uint8)BotKiller->Team;
+			KillerWeapon = (uint8)BotKiller->Weapon;
 		}
 		if (ARSGameState* GS = GetWorld()->GetGameState<ARSGameState>())
 		{
 			GS->MulticastAddKill(KillerName, RSCombatantName(this), WeaponName,
-				bLastHitHeadshot, KillerTeam, (uint8)Team);
+				bLastHitHeadshot, KillerTeam, (uint8)Team, KillerWeapon,
+				RSComputeKillFlags(KillerActor, this, bLastHitHeadshot));
 		}
 		bLastHitHeadshot = false;
 		if (ARSGameMode* GM = Cast<ARSGameMode>(GetWorld()->GetAuthGameMode()))

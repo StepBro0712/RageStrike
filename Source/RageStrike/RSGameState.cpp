@@ -34,12 +34,17 @@ float ARSGameState::GetTimeLeft() const
 }
 
 void ARSGameState::MulticastAddKill_Implementation(const FString& Killer, const FString& Victim,
-	const FString& Weapon, bool bHeadshot, uint8 KillerTeam, uint8 VictimTeam)
+	const FString& Weapon, bool bHeadshot, uint8 KillerTeam, uint8 VictimTeam,
+	uint8 WeaponType, uint8 Flags)
 {
 	FRSKillEntry E;
+	E.Flags = Flags;
 	E.Killer = Killer;
 	E.Victim = Victim;
 	E.Weapon = Weapon;
+	// значение вне диапазона трактуем как «оружие неизвестно»
+	E.WeaponType = (WeaponType < (uint8)ERSWeapon::COUNT)
+		? (ERSWeapon)WeaponType : ERSWeapon::COUNT;
 	E.bHeadshot = bHeadshot;
 	E.KillerTeam = KillerTeam;
 	E.VictimTeam = VictimTeam;

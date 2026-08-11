@@ -72,7 +72,17 @@ private:
 	FText GetVSyncText() const;
 	void ToggleVSync();
 
-	TSharedRef<SWidget> MakeButton(const FText& Label, TFunction<void()> OnClick);
+	// Вид кнопки задаёт её вес в иерархии, а не только цвет: раньше все
+	// кнопки меню выглядели одинаково и главное действие терялось среди
+	// второстепенных.
+	enum class ERSBtn : uint8
+	{
+		Primary,    // главное действие экрана — жёлтая заливка CS2
+		Secondary,  // обычное действие — тёмная плашка
+		Danger      // выход, разрыв соединения
+	};
+	TSharedRef<SWidget> MakeButton(const FText& Label, TFunction<void()> OnClick,
+		ERSBtn Kind = ERSBtn::Secondary);
 	TSharedRef<SWidget> MakeCycleRow(const FText& Label, TAttribute<FText> Value,
 		TFunction<void()> OnPrev, TFunction<void()> OnNext);
 };

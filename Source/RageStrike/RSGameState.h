@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/GameStateBase.h"
+#include "RSWeaponData.h"
 #include "RSGameState.generated.h"
 
 UENUM()
@@ -19,7 +20,13 @@ struct FRSKillEntry
 {
 	FString Killer;
 	FString Victim;
+	// Имя оружия оставлено запасным вариантом: killfeed рисует иконку, но
+	// убить может и то, у чего иконки нет (падение, огонь, добивание миром).
 	FString Weapon;
+	// COUNT = оружие неизвестно, рисуем текстом
+	ERSWeapon WeaponType = ERSWeapon::COUNT;
+	// битовая маска обстоятельств, см. namespace RSKill в RSCharacter.h
+	uint8 Flags = 0;
 	bool bHeadshot = false;
 	uint8 KillerTeam = 0;
 	uint8 VictimTeam = 0;
@@ -78,8 +85,11 @@ public:
 
 	// killfeed: сервер рассылает, клиенты копят локально, HUD рисует
 	UFUNCTION(NetMulticast, Reliable)
+	// WeaponType передаётся числом: ERSWeapon не UENUM, а параметры RPC
+	// должны быть реплицируемых типов. ERSWeapon::COUNT = неизвестно.
 	void MulticastAddKill(const FString& Killer, const FString& Victim,
-		const FString& Weapon, bool bHeadshot, uint8 KillerTeam, uint8 VictimTeam);
+		const FString& Weapon, bool bHeadshot, uint8 KillerTeam, uint8 VictimTeam,
+		uint8 WeaponType, uint8 Flags);
 
 	TArray<FRSKillEntry> KillFeed;
 };

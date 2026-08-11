@@ -6,6 +6,7 @@
 #include "RSPlayerController.h"
 #include "RSMatchSettings.h"
 #include "RSIcons.h"
+#include "RSFont.h"
 #include "Engine/Texture2D.h"
 #include "RenderCore.h"
 #include "RHI.h"
@@ -39,25 +40,68 @@ namespace
 		return Team == (uint8)ERSTeam::CT ? ColCT : ColT;
 	}
 
-	// Шрифт HUD. Раньше весь текст рисовался мелким встроенным шрифтом и
-	// растягивался в полтора-два раза — отсюда пиксельность. Берём крупный,
-	// а прежний размер компенсируем масштабом в DrawTextScaled.
-	UFont* RSFontMain() { return GEngine->GetSmallFont(); }
-	UFont* RSFontBig()  { return GEngine->GetMediumFont(); }
+	// Шрифт HUD. Движковые GetSmallFont/GetMediumFont растровые и мылятся
+	// при растяжении — теперь берём векторный из RSFont (Roboto-Bold через
+	// FontFace с рантайм-кешем). Если ассет не поднялся, RSFont сам вернёт
+	// движковый, поэтому текст не пропадёт ни при каком раскладе.
+	UFont* RSFontMain() { return RSFont::Get(); }
+	UFont* RSFontBig()  { return RSFont::GetBig(); }
 }
 
 void ARSHUD::DrawTextScaled(const FString& Text, FLinearColor Color, float X, float Y,
 	UFont* Font, float Scale)
 {
-	// Шрифт Slate через канвас не рисуется — текст пропадал целиком.
-	// Возвращаемся к штатному шрифту движка: он растровый и мылится, но виден.
-	DrawText(Text, Color, X, Y, Font, Scale);
+	// Векторный шрифт растеризуется в кеш своего кегля, а масштаб канвас
+	// применяет уже к готовой картинке. Компенсация из RSFont возвращает
+	// текст к размеру, под который верстался HUD, и при этом гарантирует,
+	// что картинку всегда ужимают, а не растягивают.
+	//
+	// На UIScale домножаем здесь же: иначе панели ужимаются под разрешение,
+	// а кегль остаётся прежним, и в окне ниже 1080p текст вылезает из всех
+	// плашек разом. Один множитель на весь HUD — все замеры и вся вёрстка
+	// автоматически остаются согласованными.
+	DrawText(Text, Color, X, Y, Font, Scale * RSFont::RenderScale(Font) * UIScale());
 }
 
 void ARSHUD::GetTextSizeScaled(const FString& Text, float& OutW, float& OutH,
 	UFont* Font, float Scale)
 {
-	GetTextSize(Text, OutW, OutH, Font, Scale);
+	// Замер обязан идти с теми же множителями, иначе панели посчитают ширину
+	// не по тому, что реально нарисовано.
+	GetTextSize(Text, OutW, OutH, Font, Scale * RSFont::RenderScale(Font) * UIScale());
+}
+
+void ARSHUD::DrawPanel(float X, float Y, float W, float H, const FLinearColor& Accent)
+{
+	const float S = UIScale();
+	DrawRect(ColBgDark, X, Y, W, H);
+	DrawBoxOutline(X, Y, W, H, ColBorder, FMath::Max(1.f, 1.5f * S));
+	if (Accent.A > 0.f)
+	{
+		// акцентная полоса слева — приём из CS2, она же кодирует состояние
+		// блока цветом, не полагаясь на один только цвет цифр
+		DrawRect(Accent, X, Y, FMath::Max(2.f, 4.f * S), H);
+	}
+}
+
+void ARSHUD::DrawTextCentered(const FString& Text, FLinearColor Color, float CX, float CY,
+	UFont* Font, float Scale)
+{
+	float W = 0.f, H = 0.f;
+	GetTextSizeScaled(Text, W, H, Font, Scale);
+	DrawTextScaled(Text, Color, CX - W * 0.5f, CY - H * 0.5f, Font, Scale);
+}
+
+float ARSHUD::UIScale() const
+{
+	// Размеры HUD подбирались на 1080p. На 1440p и 4K те же пиксели
+	// визуально сжимались вдвое, поэтому масштабируем по высоте экрана.
+	// Ниже 0.8 не опускаемся: текст канваса и так растровый.
+	if (!Canvas || Canvas->SizeY <= 0)
+	{
+		return 1.f;
+	}
+	return FMath::Clamp((float)Canvas->SizeY / 1080.f, 0.8f, 2.5f);
 }
 
 void ARSHUD::DrawBoxOutline(float X, float Y, float W, float H, const FLinearColor& Color, float Thickness)
@@ -66,6 +110,31 @@ void ARSHUD::DrawBoxOutline(float X, float Y, float W, float H, const FLinearCol
 	DrawLine(X, Y + H, X + W, Y + H, Color, Thickness);
 	DrawLine(X, Y, X, Y + H, Color, Thickness);
 	DrawLine(X + W, Y, X + W, Y + H, Color, Thickness);
+}
+
+// Вписывает иконку в отведённый прямоугольник с сохранением пропорций и
+// центрует её в нём. Без этого K2_DrawTexture растягивает текстуру на весь
+// бокс: в закупке карточка широкая и низкая, и стволы выходили вытянутыми.
+static void FitIconRect(const UTexture2D* Icon, float& X, float& Y, float& W, float& H)
+{
+	if (!Icon || W <= 0.f || H <= 0.f)
+	{
+		return;
+	}
+	const float TexW = (float)Icon->GetSizeX();
+	const float TexH = (float)Icon->GetSizeY();
+	if (TexW <= 0.f || TexH <= 0.f)
+	{
+		return;
+	}
+
+	const float Fit = FMath::Min(W / TexW, H / TexH);
+	const float NewW = TexW * Fit;
+	const float NewH = TexH * Fit;
+	X += (W - NewW) * 0.5f;
+	Y += (H - NewH) * 0.5f;
+	W = NewW;
+	H = NewH;
 }
 
 // Иконка оружия из CS2. Если её нет, откатываемся на рисованный силуэт.
@@ -78,6 +147,7 @@ static void DrawWeaponIcon(UCanvas* Canvas, float X, float Y, float W, float H,
 	}
 	if (UTexture2D* Icon = RSIcons::ForWeapon(Weapon))
 	{
+		FitIconRect(Icon, X, Y, W, H);
 		Canvas->K2_DrawTexture(Icon, FVector2D(X, Y), FVector2D(W, H),
 			FVector2D::ZeroVector, FVector2D::UnitVector, Color, EBlendMode::BLEND_Translucent);
 	}
@@ -88,6 +158,7 @@ static void DrawEquipIcon(UCanvas* Canvas, float X, float Y, float W, float H,
 {
 	if (Canvas && Icon)
 	{
+		FitIconRect(Icon, X, Y, W, H);
 		Canvas->K2_DrawTexture(Icon, FVector2D(X, Y), FVector2D(W, H),
 			FVector2D::ZeroVector, FVector2D::UnitVector, Color, EBlendMode::BLEND_Translucent);
 	}
@@ -212,16 +283,31 @@ void ARSHUD::DrawHUD()
 			Canvas->SizeX * 0.5f - 200.f, Canvas->SizeY * 0.72f, RSFontMain(), 1.4f);
 	}
 
-	// Хитмаркер попадания
-	if (Now - Player->LastHitMarkerTime < 0.15f)
+	// Хитмаркер попадания. Раньше он ровно 0.15 с висел белым и пропадал
+	// рывком, а на светлых стенах Mirage белые штрихи без контура сливались
+	// с фоном. Теперь гаснет за 0.22 с и рисуется с тёмной обводкой.
+	const float HitAge = Now - Player->LastHitMarkerTime;
+	if (HitAge < 0.22f)
 	{
+		const float S = UIScale();
 		const float CX = Canvas->SizeX * 0.5f;
 		const float CY = Canvas->SizeY * 0.5f;
-		const FLinearColor C = FLinearColor::White;
-		DrawLine(CX - 14.f, CY - 14.f, CX - 6.f, CY - 6.f, C, 3.f);
-		DrawLine(CX + 14.f, CY - 14.f, CX + 6.f, CY - 6.f, C, 3.f);
-		DrawLine(CX - 14.f, CY + 14.f, CX - 6.f, CY + 6.f, C, 3.f);
-		DrawLine(CX + 14.f, CY + 14.f, CX + 6.f, CY + 6.f, C, 3.f);
+		const float A = FMath::Clamp(1.f - HitAge / 0.22f, 0.f, 1.f);
+		const float In = 6.f * S;
+		const float Out = 14.f * S;
+		const float T = FMath::Max(1.f, 3.f * S);
+
+		// два прохода: сначала контур потолще, поверх — сам штрих
+		for (int32 Pass = 0; Pass < 2; ++Pass)
+		{
+			const FLinearColor PC = (Pass == 0) ? FLinearColor(0.f, 0.f, 0.f, 0.8f * A)
+			                                    : FLinearColor(1.f, 1.f, 1.f, A);
+			const float PT = (Pass == 0) ? T + 2.f * FMath::Max(1.f, S) : T;
+			DrawLine(CX - Out, CY - Out, CX - In, CY - In, PC, PT);
+			DrawLine(CX + Out, CY - Out, CX + In, CY - In, PC, PT);
+			DrawLine(CX - Out, CY + Out, CX - In, CY + In, PC, PT);
+			DrawLine(CX + Out, CY + Out, CX + In, CY + In, PC, PT);
+		}
 	}
 
 	// Красная вспышка урона
@@ -249,15 +335,29 @@ void ARSHUD::DrawCrosshair(const ARSCharacter* Player)
 		return;
 	}
 
+	const float S = UIScale();
 	const float CX = Canvas->SizeX * 0.5f;
 	const float CY = Canvas->SizeY * 0.5f;
 	// всё берётся из настроек игрока; динамический зазор растёт от разброса
-	const float Len = RSCrosshair::GetLength();
-	const float Thick = RSCrosshair::GetThickness();
-	const float BaseGap = RSCrosshair::GetGap();
-	const float Gap = RSCrosshair::GetDynamic()
-		? FMath::Clamp(BaseGap + Player->CurrentSpreadDeg * 8.f, BaseGap, BaseGap + 22.f)
+	const float Len = RSCrosshair::GetLength() * S;
+	const float Thick = FMath::Max(1.f, FMath::RoundToFloat(RSCrosshair::GetThickness() * S));
+	const float BaseGap = RSCrosshair::GetGap() * S;
+	const float TargetGap = RSCrosshair::GetDynamic()
+		? FMath::Clamp(BaseGap + Player->CurrentSpreadDeg * 8.f * S, BaseGap, BaseGap + 22.f * S)
 		: BaseGap;
+
+	// Раньше зазор брался прямо из разброса и скакал на каждый выстрел —
+	// прицел мерцал. Теперь открывается мгновенно (выстрел должен читаться
+	// сразу), а закрывается плавно, примерно за четверть секунды.
+	if (CrossGapShown < 0.f)
+	{
+		CrossGapShown = TargetGap;
+	}
+	CrossGapShown = (TargetGap > CrossGapShown)
+		? TargetGap
+		: FMath::FInterpTo(CrossGapShown, TargetGap,
+			FMath::Min(FApp::GetDeltaTime(), 0.1f), 12.f);
+	const float Gap = CrossGapShown;
 
 	const FLinearColor Color = RSCrosshair::GetColor();
 	const FLinearColor Outline(0.f, 0.f, 0.f, 0.85f);
@@ -265,10 +365,11 @@ void ARSHUD::DrawCrosshair(const ARSCharacter* Player)
 	if (RSCrosshair::GetOutline())
 	{
 		// тёмный контур: прицел читается на любом фоне
-		DrawLine(CX - Gap - Len - 1.f, CY, CX - Gap + 1.f, CY, Outline, Thick + 2.f);
-		DrawLine(CX + Gap - 1.f, CY, CX + Gap + Len + 1.f, CY, Outline, Thick + 2.f);
-		DrawLine(CX, CY - Gap - Len - 1.f, CX, CY - Gap + 1.f, Outline, Thick + 2.f);
-		DrawLine(CX, CY + Gap - 1.f, CX, CY + Gap + Len + 1.f, Outline, Thick + 2.f);
+		const float O = FMath::Max(1.f, S);
+		DrawLine(CX - Gap - Len - O, CY, CX - Gap + O, CY, Outline, Thick + 2.f * O);
+		DrawLine(CX + Gap - O, CY, CX + Gap + Len + O, CY, Outline, Thick + 2.f * O);
+		DrawLine(CX, CY - Gap - Len - O, CX, CY - Gap + O, Outline, Thick + 2.f * O);
+		DrawLine(CX, CY + Gap - O, CX, CY + Gap + Len + O, Outline, Thick + 2.f * O);
 	}
 
 	if (Len > 0.f)
@@ -281,9 +382,11 @@ void ARSHUD::DrawCrosshair(const ARSCharacter* Player)
 
 	if (RSCrosshair::GetDot())
 	{
+		const float O = FMath::Max(1.f, S);
 		if (RSCrosshair::GetOutline())
 		{
-			DrawRect(Outline, CX - Thick * 0.5f - 1.f, CY - Thick * 0.5f - 1.f, Thick + 2.f, Thick + 2.f);
+			DrawRect(Outline, CX - Thick * 0.5f - O, CY - Thick * 0.5f - O,
+				Thick + 2.f * O, Thick + 2.f * O);
 		}
 		DrawRect(Color, CX - Thick * 0.5f, CY - Thick * 0.5f, Thick, Thick);
 	}
@@ -497,17 +600,20 @@ void ARSHUD::DrawCheatStatus(const ARSCharacter* Player)
 	}
 
 	// у левого края, под лентой событий: по центру полоски лезли на прицел
-	const float W = 190.f;
-	const float X = 32.f;
-	float Y = Canvas->SizeY * 0.5f - 40.f;
+	const float S = UIScale();
+	const float W = 190.f * S;
+	const float X = 32.f * S;
+	float Y = Canvas->SizeY * 0.5f - 40.f * S;
 
 	auto Bar = [&](const FString& Label, float Frac, const FString& Value, const FLinearColor& Col)
 	{
-		DrawTextScaled(Label, ColDim, X, Y - 1.f, RSFontMain(), 1.0f);
-		DrawRect(FLinearColor(0.f, 0.f, 0.f, 0.45f), X + 46.f, Y + 2.f, W - 100.f, 8.f);
-		DrawRect(Col, X + 46.f, Y + 2.f, (W - 100.f) * FMath::Clamp(Frac, 0.f, 1.f), 8.f);
-		DrawTextScaled(Value, Col, X + W - 48.f, Y - 1.f, RSFontMain(), 1.0f);
-		Y += 16.f;
+		const float BarX = X + 46.f * S;
+		const float BarW = W - 100.f * S;
+		DrawTextScaled(Label, ColDim, X, Y - 1.f * S, RSFontMain(), 1.0f);
+		DrawRect(FLinearColor(0.f, 0.f, 0.f, 0.45f), BarX, Y + 2.f * S, BarW, 8.f * S);
+		DrawRect(Col, BarX, Y + 2.f * S, BarW * FMath::Clamp(Frac, 0.f, 1.f), 8.f * S);
+		DrawTextScaled(Value, Col, X + W - 48.f * S, Y - 1.f * S, RSFontMain(), 1.0f);
+		Y += 16.f * S;
 	};
 
 	if (bShowDT)
@@ -547,46 +653,77 @@ void ARSHUD::DrawCheatLog(const ARSCharacter* Player)
 	}
 
 	// лента слева под радаром: свежие строки внизу, старые тают
+	const float S = UIScale();
 	const float Now = GetWorld()->GetTimeSeconds();
 	const float Life = 5.f;
-	float Y = 240.f;
+	// якорь считается от нижнего края радара, а не жёстким числом 240:
+	// радар теперь масштабируется, и лента должна ехать вместе с ним
+	float Y = (30.f + 190.f + 20.f) * S;
+	const float X = 32.f * S;
+	// Шаг считается от реальной высоты строки, а не жёсткими 17 пикселями:
+	// у векторного шрифта своя метрика, и на константе подложки соседних
+	// строк наезжали друг на друга.
+	float ProbeW = 0.f, ProbeH = 0.f;
+	GetTextSizeScaled(TEXT("Ap"), ProbeW, ProbeH, RSFontMain(), 1.05f);
+	const float Step = ProbeH + 6.f * S;
 
+	// Не больше шести строк. Хранится десять, и в перестрелке лента
+	// растягивалась почти на треть экрана поверх карты.
+	TArray<const ARSCharacter::FRSCheatLog*> Lines;
 	for (const ARSCharacter::FRSCheatLog& Line : Player->CheatLogLines)
 	{
-		const float Age = Now - Line.Time;
-		if (Age > Life)
+		if (Now - Line.Time <= Life)
 		{
-			continue;
+			Lines.Add(&Line);
 		}
-		FLinearColor Col = Line.Color;
-		Col.A = FMath::Clamp((Life - Age) / 1.5f, 0.f, 1.f);
-		DrawTextScaled(Line.Text, Col, 32.f, Y, RSFontMain(), 1.05f);
-		Y += 17.f;
+	}
+	while (Lines.Num() > 6)
+	{
+		Lines.RemoveAt(0);
+	}
+
+	UFont* Font = RSFontMain();
+	for (const ARSCharacter::FRSCheatLog* Ptr : Lines)
+	{
+		const float Age = Now - Ptr->Time;
+		const float A = FMath::Clamp((Life - Age) / 1.5f, 0.f, 1.f);
+
+		// Тёмная подложка под строкой: лента лежит поверх карты, и на
+		// светлых стенах цветной текст без фона читался плохо.
+		float TW = 0.f, TH = 0.f;
+		GetTextSizeScaled(Ptr->Text, TW, TH, Font, 1.05f);
+		DrawRect(FLinearColor(0.02f, 0.03f, 0.05f, 0.55f * A),
+			X - 6.f * S, Y - 2.f * S, TW + 12.f * S, TH + 4.f * S);
+
+		FLinearColor Col = Ptr->Color;
+		Col.A = A;
+		DrawTextScaled(Ptr->Text, Col, X, Y, Font, 1.05f);
+		Y += Step;
 	}
 }
 
 void ARSHUD::DrawRadar(const ARSCharacter* Player)
 {
 	// Круглый радар CS2
-	const float Size = 190.f;
-	const float X = 30.f, Y = 30.f;
+	const float S = UIScale();
+	const float Size = 190.f * S;
+	const float X = 30.f * S, Y = 30.f * S;
 	const float CX = X + Size * 0.5f;
 	const float CY = Y + Size * 0.5f;
 	const float R = Size * 0.5f;
 	const float Range = 4500.f;
 
-	DrawRect(ColBgDark, X, Y, Size, Size);
-	DrawBoxOutline(X, Y, Size, Size, ColBorder, 2.0f);
+	DrawPanel(X, Y, Size, Size, FLinearColor(0.f, 0.f, 0.f, 0.f));
 
 	// Сетка и круги дальности
-	DrawLine(CX, Y + 4.f, CX, Y + Size - 4.f, FLinearColor(1.f, 1.f, 1.f, 0.10f), 1.5f);
-	DrawLine(X + 4.f, CY, X + Size - 4.f, CY, FLinearColor(1.f, 1.f, 1.f, 0.10f), 1.5f);
+	DrawLine(CX, Y + 4.f * S, CX, Y + Size - 4.f * S, FLinearColor(1.f, 1.f, 1.f, 0.10f), FMath::Max(1.f, 1.5f * S));
+	DrawLine(X + 4.f * S, CY, X + Size - 4.f * S, CY, FLinearColor(1.f, 1.f, 1.f, 0.10f), FMath::Max(1.f, 1.5f * S));
 	DrawBoxOutline(X + Size * 0.25f, Y + Size * 0.25f, Size * 0.5f, Size * 0.5f, FLinearColor(1.f, 1.f, 1.f, 0.10f), 1.f);
 
 	// Метки плентов A и B
 	UFont* Font = RSFontBig();
-	DrawTextScaled(TEXT("A"), ColGold, X + 18.f, Y + 14.f, Font, 1.1f);
-	DrawTextScaled(TEXT("B"), ColGold, X + Size - 28.f, Y + Size - 28.f, Font, 1.1f);
+	DrawTextScaled(TEXT("A"), ColGold, X + 18.f * S, Y + 14.f * S, Font, 1.1f);
+	DrawTextScaled(TEXT("B"), ColGold, X + Size - 28.f * S, Y + Size - 28.f * S, Font, 1.1f);
 
 	const FVector MyLoc = Player->GetActorLocation();
 	const float Yaw = FMath::DegreesToRadians(Player->GetControlRotation().Yaw);
@@ -599,11 +736,12 @@ void ARSHUD::DrawRadar(const ARSCharacter* Player)
 		const FVector2D Rel(Rel3.X, Rel3.Y);
 		float U = FVector2D::DotProduct(Rel, Right) / Range * R;
 		float V = -FVector2D::DotProduct(Rel, Fwd) / Range * R;
-		U = FMath::Clamp(U, -R + 8.f, R - 8.f);
-		V = FMath::Clamp(V, -R + 8.f, R - 8.f);
+		const float Dot = 8.f * S;
+		U = FMath::Clamp(U, -R + Dot, R - Dot);
+		V = FMath::Clamp(V, -R + Dot, R - Dot);
 
 		const FLinearColor DotCol = bEnemy ? ColRed : TeamColor(Team);
-		DrawRect(DotCol, CX + U - 4.f, CY + V - 4.f, 8.f, 8.f);
+		DrawRect(DotCol, CX + U - Dot * 0.5f, CY + V - Dot * 0.5f, Dot, Dot);
 	};
 
 	for (TActorIterator<ARSCharacter> It(GetWorld()); It; ++It)
@@ -620,9 +758,10 @@ void ARSHUD::DrawRadar(const ARSCharacter* Player)
 	}
 
 	// Свой маркер — яркая белая стрелка
-	DrawLine(CX, CY - 9.f, CX - 6.f, CY + 6.f, FLinearColor::White, 2.5f);
-	DrawLine(CX, CY - 9.f, CX + 6.f, CY + 6.f, FLinearColor::White, 2.5f);
-	DrawLine(CX - 6.f, CY + 6.f, CX + 6.f, CY + 6.f, FLinearColor::White, 2.0f);
+	const float AT = FMath::Max(1.5f, 2.5f * S);
+	DrawLine(CX, CY - 9.f * S, CX - 6.f * S, CY + 6.f * S, FLinearColor::White, AT);
+	DrawLine(CX, CY - 9.f * S, CX + 6.f * S, CY + 6.f * S, FLinearColor::White, AT);
+	DrawLine(CX - 6.f * S, CY + 6.f * S, CX + 6.f * S, CY + 6.f * S, FLinearColor::White, AT * 0.8f);
 }
 
 void ARSHUD::DrawKillFeed(const ARSCharacter* Player)
@@ -634,32 +773,137 @@ void ARSHUD::DrawKillFeed(const ARSCharacter* Player)
 	}
 
 	UFont* Font = RSFontMain();
+	const float S = UIScale();
 	const float Now = GetWorld()->GetTimeSeconds();
-	const float Right = Canvas->SizeX - 260.f;
-	float Y = 45.f;
+	// Отступ справа был жёстко 260 px: на 4K лента почти упиралась в край,
+	// на 1080p съедала четверть строки. Считаем от ширины экрана.
+	const float Right = Canvas->SizeX - FMath::Max(140.f, Canvas->SizeX * 0.135f);
+	// Без множителя S: его теперь применяет сама DrawTextScaled. Здесь он
+	// оставался с прошлой правки, и масштаб домножался дважды — текст рос
+	// как квадрат, а высота строки линейно, из-за чего буквы вылезали за
+	// рамку тем сильнее, чем дальше разрешение от 1080p.
+	const float Scale = 1.25f;
+	// высота строки — от реального текста, а не от константы
+	float RowProbeW = 0.f, RowProbeH = 0.f;
+	GetTextSizeScaled(TEXT("Ap"), RowProbeW, RowProbeH, Font, Scale);
+	const float RowH = RowProbeH + 10.f * S;
+	float Y = 45.f * S;
 
+	// имя локального игрока, чтобы подсветить свои строки
+	const FString Me = RSCombatantName(Player);
+
+	// Показываем не больше пяти строк. Записей хранится восемь, и когда
+	// раунд сливался в перестрелку, лента доезжала до радара.
+	TArray<const FRSKillEntry*> Rows;
 	for (const FRSKillEntry& E : State->KillFeed)
 	{
+		if (Now - E.Time <= 6.f)
+		{
+			Rows.Add(&E);
+		}
+	}
+	while (Rows.Num() > 5)
+	{
+		Rows.RemoveAt(0);
+	}
+
+	for (const FRSKillEntry* Ptr : Rows)
+	{
+		const FRSKillEntry& E = *Ptr;
 		const float Age = Now - E.Time;
-		if (Age > 6.f)
+		// Проявление за 0.12 с: раньше строка возникала мгновенно и дёргала
+		// взгляд посреди боя. Уход прежний — последняя секунда жизни.
+		const float Alpha = FMath::Min(
+			FMath::Clamp(Age / 0.12f, 0.f, 1.f),
+			FMath::Clamp(1.f - (Age - 5.f), 0.f, 1.f));
+		if (Alpha <= 0.f)
 		{
 			continue;
 		}
-		const float Alpha = FMath::Clamp(1.f - (Age - 5.f), 0.f, 1.f);
 
-		const FString WeaponPart = FString::Printf(TEXT("  [%s%s]  "),
-			*E.Weapon, E.bHeadshot ? TEXT(" HS") : TEXT(""));
+		// Свой килл и своя смерть — события разной цены, и мешать их в одну
+		// подсветку нельзя: против ботов игрок делает почти все килы, и лента
+		// целиком становилась выделенной, то есть не выделенной вовсе.
+		const bool bMyKill = !Me.IsEmpty() && E.Killer == Me;
+		const bool bMyDeath = !Me.IsEmpty() && E.Victim == Me;
+
+		// Оружие показываем иконкой из закупки. Если тип неизвестен — убил
+		// не ствол, а падение, огонь или мир, — откатываемся на прежний текст.
+		const bool bIcon = (E.WeaponType < ERSWeapon::COUNT);
+
+		// Значки обстоятельств идут после оружия. Обычное убийство не несёт
+		// ни одного — так и просили: если просто, то без иконки.
+		UTexture2D* Badges[4] = { nullptr, nullptr, nullptr, nullptr };
+		int32 BadgeCount = 0;
+		auto AddBadge = [&](uint8 Bit, UTexture2D* Tex)
+		{
+			if ((E.Flags & Bit) && Tex && BadgeCount < 4)
+			{
+				Badges[BadgeCount++] = Tex;
+			}
+		};
+		AddBadge(RSKill::Headshot, RSIcons::KillHeadshot());
+		AddBadge(RSKill::Noscope, RSIcons::KillNoscope());
+		AddBadge(RSKill::Blind, RSIcons::KillBlind());
+		AddBadge(RSKill::Smoke, RSIcons::KillSmoke());
+
+		// Хедшот раньше показывался словом HS. Теперь для него есть значок,
+		// но текст остаётся запасным: если иконка не загрузилась, признак
+		// не должен пропасть совсем.
+		const bool bHSText = E.bHeadshot && Badges[0] == nullptr;
+		const FString WeaponPart = bIcon
+			? (bHSText ? FString(TEXT(" HS ")) : FString())
+			: FString::Printf(TEXT("  [%s%s]  "), *E.Weapon, E.bHeadshot ? TEXT(" HS") : TEXT(""));
 
 		float KW, KH, WW, WH, VW, VH;
-		GetTextSizeScaled(E.Killer, KW, KH, Font, 1.25f);
-		GetTextSizeScaled(WeaponPart, WW, WH, Font, 1.25f);
-		GetTextSizeScaled(E.Victim, VW, VH, Font, 1.25f);
+		GetTextSizeScaled(E.Killer, KW, KH, Font, Scale);
+		GetTextSizeScaled(WeaponPart, WW, WH, Font, Scale);
+		GetTextSizeScaled(E.Victim, VW, VH, Font, Scale);
 
-		const float TotalW = KW + WW + VW + 20.f;
+		// иконки занимают своё место в ширине строки наравне с текстом
+		const float IcoW = bIcon ? 58.f * S : 0.f;
+		const float IcoH = bIcon ? 20.f * S : 0.f;
+		const float IcoPad = bIcon ? 12.f * S : 0.f;
+		const float BadgeSz = 20.f * S;
+		const float BadgeGap = 6.f * S;
+		const float BadgesW = BadgeCount > 0
+			? BadgeCount * (BadgeSz + BadgeGap) : 0.f;
+		WW += IcoW + IcoPad * 2.f + BadgesW;
+
+		const float TotalW = KW + WW + VW + 20.f * S;
 		const float X = Right - TotalW;
+		// боковой отступ 12, а не 8: на масштабе 0.83 текст почти упирался
+		// в рамку
+		const float PanelX = X - 12.f * S;
+		const float PanelW = TotalW + 24.f * S;
 
-		DrawRect(FLinearColor(0.04f, 0.05f, 0.07f, 0.85f * Alpha), X - 8.f, Y - 4.f, TotalW + 16.f, 28.f);
-		DrawBoxOutline(X - 8.f, Y - 4.f, TotalW + 16.f, 28.f, FLinearColor(1.f, 1.f, 1.f, 0.20f * Alpha), 1.f);
+		// Подложка гаснет медленнее текста. Раньше обе шли с одним и тем же
+		// коэффициентом, и к концу затухания полупрозрачная панель уже почти
+		// не перекрывала карту — имена оказывались на голой светлой стене.
+		const float PanelA = 0.88f * FMath::Pow(Alpha, 0.6f);
+
+		// Свой килл отмечаем сдержанно — подложка чуть светлее и рамка ярче,
+		// но обе нейтрально-серые. Тёплый фон здесь пробовали: на нём синий
+		// цвет CT у имени жертвы терял насыщенность и читался почти белым.
+		// Своя смерть — событие редкое, её и надо ловить взглядом: красная
+		// подложка и красная рамка вдвое толще.
+		FLinearColor PanelC(0.04f, 0.05f, 0.07f, PanelA);
+		FLinearColor BorderC(1.f, 1.f, 1.f, 0.20f * Alpha);
+		float BorderT = FMath::Max(1.f, S);
+		if (bMyDeath)
+		{
+			PanelC = FLinearColor(0.16f, 0.03f, 0.03f, PanelA);
+			BorderC = FLinearColor(0.95f, 0.25f, 0.20f, 0.9f * Alpha);
+			BorderT = FMath::Max(2.f, 2.f * S);
+		}
+		else if (bMyKill)
+		{
+			PanelC = FLinearColor(0.09f, 0.10f, 0.13f, PanelA);
+			BorderC = FLinearColor(1.f, 1.f, 1.f, 0.45f * Alpha);
+		}
+
+		DrawRect(PanelC, PanelX, Y, PanelW, RowH);
+		DrawBoxOutline(PanelX, Y, PanelW, RowH, BorderC, BorderT);
 
 		FLinearColor KC = TeamColor(E.KillerTeam); KC.A = Alpha;
 		FLinearColor VC = TeamColor(E.VictimTeam); VC.A = Alpha;
@@ -669,10 +913,45 @@ void ARSHUD::DrawKillFeed(const ARSCharacter* Player)
 			WC = FLinearColor(1.f, 0.25f, 0.2f, Alpha);
 		}
 
-		DrawTextScaled(E.Killer, KC, X, Y, Font, 1.25f);
-		DrawTextScaled(WeaponPart, WC, X + KW, Y, Font, 1.25f);
-		DrawTextScaled(E.Victim, VC, X + KW + WW, Y, Font, 1.25f);
-		Y += 32.f;
+		// Текст по центру строки: раньше он рисовался от верхнего края
+		// подложки и висел в её верхней трети.
+		const float TextH = FMath::Max3(KH, WH, VH);
+		const float TextY = Y + (RowH - TextH) * 0.5f;
+
+		DrawTextScaled(E.Killer, KC, X, TextY, Font, Scale);
+
+		if (bIcon)
+		{
+			// иконка оружия по центру строки, за ней значки обстоятельств
+			DrawWeaponIcon(Canvas, X + KW + IcoPad, Y + (RowH - IcoH) * 0.5f,
+				IcoW, IcoH, E.WeaponType, WC);
+
+			float BadgeX = X + KW + IcoPad + IcoW;
+			if (bHSText)
+			{
+				DrawTextScaled(WeaponPart, WC, BadgeX, TextY, Font, Scale);
+				BadgeX += WW - IcoW - IcoPad * 2.f - BadgesW;
+			}
+			for (int32 b = 0; b < BadgeCount; b++)
+			{
+				float BX = BadgeX + BadgeGap * 0.5f;
+				float BY = Y + (RowH - BadgeSz) * 0.5f;
+				float BW = BadgeSz;
+				float BH = BadgeSz;
+				FitIconRect(Badges[b], BX, BY, BW, BH);
+				Canvas->K2_DrawTexture(Badges[b], FVector2D(BX, BY), FVector2D(BW, BH),
+					FVector2D::ZeroVector, FVector2D::UnitVector, WC,
+					EBlendMode::BLEND_Translucent);
+				BadgeX += BadgeSz + BadgeGap;
+			}
+		}
+		else
+		{
+			DrawTextScaled(WeaponPart, WC, X + KW, TextY, Font, Scale);
+		}
+
+		DrawTextScaled(E.Victim, VC, X + KW + WW, TextY, Font, Scale);
+		Y += RowH + 4.f * S;
 	}
 }
 
@@ -713,17 +992,36 @@ void ARSHUD::DrawPerfStats()
 	}
 
 	UFont* Font = RSFontMain();
-	const float X = Canvas->SizeX - 150.f;
-	float Y = 8.f;
-
+	const float S = UIScale();
 	const int32 FPS = FMath::RoundToInt(ShownFPS);
 	// зелёный от 90, жёлтый от 45, ниже красный
 	const FLinearColor FPSColor = (FPS >= 90) ? ColCSGreen
 		: (FPS >= 45) ? ColGold : ColRed;
 
-	DrawRect(FLinearColor(0.f, 0.f, 0.f, 0.45f), X - 8.f, Y - 4.f, 148.f, (Mode >= 2) ? 58.f : 22.f);
-	DrawTextScaled(FString::Printf(TEXT("%d FPS   %.1f мс"), FPS, ShownFrameMs),
-		FPSColor, X, Y, Font, 1.15f);
+	const FString TopStr = FString::Printf(TEXT("%d FPS   %.1f мс"), FPS, ShownFrameMs);
+	const FString CPUStr = FString::Printf(TEXT("ЦП   %3.0f %%"), ShownCPUPct);
+	const FString GPUStr = FString::Printf(TEXT("ГП   %3.0f %%"), ShownGPUPct);
+
+	// Ширину блока меряем по самой длинной строке, а не берём 148 пикселей:
+	// на широком шрифте «мс» уезжало за край экрана и обрезалось.
+	float BoxW = 0.f, LineH = 0.f, TW = 0.f, TH = 0.f;
+	GetTextSizeScaled(TopStr, TW, LineH, Font, 1.15f);
+	BoxW = TW;
+	if (Mode >= 2)
+	{
+		GetTextSizeScaled(CPUStr, TW, TH, Font, 1.05f);
+		BoxW = FMath::Max(BoxW, TW);
+		GetTextSizeScaled(GPUStr, TW, TH, Font, 1.05f);
+		BoxW = FMath::Max(BoxW, TW);
+	}
+
+	const float Pad = 8.f * S;
+	const float X = Canvas->SizeX - BoxW - Pad * 2.f;
+	float Y = 8.f * S;
+	const float BoxH = (Mode >= 2) ? (LineH + 2.f * TH + 16.f * S) : (LineH + 8.f * S);
+
+	DrawRect(FLinearColor(0.f, 0.f, 0.f, 0.45f), X - Pad, Y - 4.f * S, BoxW + Pad * 2.f, BoxH);
+	DrawTextScaled(TopStr, FPSColor, X, Y, Font, 1.15f);
 
 	if (Mode >= 2)
 	{
@@ -732,12 +1030,10 @@ void ARSHUD::DrawPerfStats()
 			return (Pct >= 90.f) ? ColRed : (Pct >= 70.f) ? ColGold : ColDim;
 		};
 
-		Y += 18.f;
-		DrawTextScaled(FString::Printf(TEXT("ЦП   %3.0f %%"), ShownCPUPct),
-			LoadColor(ShownCPUPct), X, Y, Font, 1.05f);
-		Y += 16.f;
-		DrawTextScaled(FString::Printf(TEXT("ГП   %3.0f %%"), ShownGPUPct),
-			LoadColor(ShownGPUPct), X, Y, Font, 1.05f);
+		Y += LineH + 2.f * S;
+		DrawTextScaled(CPUStr, LoadColor(ShownCPUPct), X, Y, Font, 1.05f);
+		Y += TH + 2.f * S;
+		DrawTextScaled(GPUStr, LoadColor(ShownGPUPct), X, Y, Font, 1.05f);
 	}
 }
 
@@ -989,85 +1285,128 @@ void ARSHUD::DrawHealthArmor(const ARSCharacter* Player)
 	UFont* Big = RSFontBig();
 	UFont* Small = RSFontMain();
 
+	const float S = UIScale();
 	const float H = Canvas->SizeY;
-	const float CX = Canvas->SizeX * 0.5f;
+	const float W = Canvas->SizeX;
 
-	// 1. ДЕНЬГИ (Слева по центру $7300 с фоновой плашкой)
+	// Раскладка как в CS2: слева снизу столбец «деньги над здоровьем»,
+	// справа снизу патроны. Центр экрана освобождён — там раньше стояло
+	// здоровье и лезло прямо под прицел.
+	const float Margin = 40.f * S;
+	const float Bottom = H - 26.f * S;
+	const float RowH = 52.f * S;
+	const float Pad = 16.f * S;
+
+	// --- ДЕНЬГИ ---
 	const FString MoneyStr = FString::Printf(TEXT("$ %d"), Player->Money);
 	float MW = 0.f, MH = 0.f;
-	GetTextSizeScaled(MoneyStr, MW, MH, Big, 1.8f);
-	// деньги ушли в левый нижний угол, здоровье — по центру, патроны — вправо
-	const float MoneyX = 44.f;
-	const float MoneyY = H - 65.f;
+	GetTextSizeScaled(MoneyStr, MW, MH, Big, 1.5f);
 
-	DrawRect(ColBgDark, MoneyX - 12.f, MoneyY - 6.f, MW + 24.f, 44.f);
-	DrawBoxOutline(MoneyX - 12.f, MoneyY - 6.f, MW + 24.f, 44.f, ColBorder, 1.5f);
-	DrawRect(ColCSGreen, MoneyX - 12.f, MoneyY - 6.f, 4.f, 44.f); // зелёная полоса CS2
-	DrawTextScaled(MoneyStr, ColCSGreen, MoneyX + 4.f, MoneyY, Big, 1.8f);
+	const float MoneyH = 38.f * S;
+	// ширина по содержимому, но не уже минимума: иначе плашка прыгает
+	// на каждую покупку
+	const float MoneyW = FMath::Max(MW + Pad * 2.f + 8.f * S, 160.f * S);
+	const float MoneyY = Bottom - RowH - 8.f * S - MoneyH;
 
-	// 2. ЗДОРОВЬЕ И БРОНЯ (Центр-Слева 100 с плашкой и 6px полосой)
+	DrawPanel(Margin, MoneyY, MoneyW, MoneyH, ColCSGreen);
+	DrawTextScaled(MoneyStr, ColCSGreen, Margin + Pad, MoneyY + (MoneyH - MH) * 0.5f, Big, 1.5f);
+
+	// --- ЗДОРОВЬЕ И БРОНЯ ---
 	const int32 HP = FMath::Max(0, FMath::RoundToInt(Player->Health));
+	const int32 AP = FMath::RoundToInt(Player->Armor);
+	const FLinearColor HPCol = HP > 30 ? ColWhite : ColRed;
+
 	const FString HPStr = FString::Printf(TEXT("%d"), HP);
 	float HW = 0.f, HH = 0.f;
-	GetTextSizeScaled(HPStr, HW, HH, Big, 2.4f);
-	const float HPX = CX - 59.f; // плашка шириной 150 встаёт ровно по центру
-	const float HPY = H - 75.f;
+	GetTextSizeScaled(HPStr, HW, HH, Big, 2.2f);
 
-	DrawRect(ColBgDark, HPX - 16.f, HPY - 4.f, 150.f, 54.f);
-	DrawBoxOutline(HPX - 16.f, HPY - 4.f, 150.f, 54.f, ColBorder, 1.5f);
+	const float HPW = 200.f * S;
+	const float HPY = Bottom - RowH;
+	const float BarH = 4.f * S;
 
-	const FLinearColor HPCol = HP > 30 ? ColWhite : ColRed;
-	DrawTextScaled(HPStr, HPCol, HPX, HPY, Big, 2.4f);
+	DrawPanel(Margin, HPY, HPW, RowH, HPCol);
+	DrawTextScaled(HPStr, HPCol, Margin + Pad, HPY + (RowH - HH) * 0.5f - BarH, Big, 2.2f);
 
-	// Толстая подчёркивающая полоса здоровья CS2 (6px)
-	const float HPFrac = FMath::Clamp(HP / 100.f, 0.f, 1.f);
-	DrawRect(FLinearColor(1.f, 1.f, 1.f, 0.18f), HPX - 10.f, HPY + 44.f, 138.f, 6.f);
-	DrawRect(HPCol, HPX - 10.f, HPY + 44.f, 138.f * HPFrac, 6.f);
-
-	// Индикатор брони
-	const int32 AP = FMath::RoundToInt(Player->Armor);
 	if (AP > 0)
 	{
-		const FString APStr = FString::Printf(TEXT("[%d]"), AP);
-		DrawTextScaled(APStr, ColCT, HPX + HW + 6.f, HPY + 16.f, Small, 1.3f);
+		// броня прижата к правому краю плашки, а не приклеена к цифре HP:
+		// раньше она ездила вместе с шириной числа (100 против 7)
+		const FString APStr = FString::Printf(TEXT("%d"), AP);
+		float AW = 0.f, AH = 0.f;
+		GetTextSizeScaled(APStr, AW, AH, Big, 1.4f);
+		DrawTextScaled(APStr, ColCT, Margin + HPW - AW - Pad,
+			HPY + (RowH - AH) * 0.5f - BarH, Big, 1.4f);
 	}
 
-	// 3. ПАТРОНЫ И ОРУЖИЕ (Центр-Справа 12 / 24 с фоновой плашкой)
-	const float AmmoX = Canvas->SizeX - 212.f;
-	const float AmmoY = H - 75.f;
+	// полоса здоровья по нижнему краю плашки, во всю её ширину
+	const float HPFrac = FMath::Clamp(HP / 100.f, 0.f, 1.f);
+	DrawRect(FLinearColor(1.f, 1.f, 1.f, 0.15f), Margin, HPY + RowH - BarH, HPW, BarH);
+	DrawRect(HPCol, Margin, HPY + RowH - BarH, HPW * HPFrac, BarH);
 
-	DrawRect(ColBgDark, AmmoX - 12.f, AmmoY - 4.f, 180.f, 54.f);
-	DrawBoxOutline(AmmoX - 12.f, AmmoY - 4.f, 180.f, 54.f, ColBorder, 1.5f);
+	// --- ПАТРОНЫ ---
+	const float AmmoW = 210.f * S;
+	const float AmmoX = W - Margin - AmmoW;
+	const float AmmoY = Bottom - RowH;
+
+	const bool bGrenade = RSWeapons::IsGrenade(Player->CurrentWeapon);
+	const int32 InMag = Player->GetAmmo();
+	// Порог «мало патронов» считается от размера магазина, а не жёсткими
+	// четырьмя штуками: у AWP с магазином на 10 четыре патрона — это ещё
+	// не тревога, а у пистолета на 20 — уже да.
+	const int32 MaxMag = Player->GetMaxAmmo();
+	const bool bLow = !bGrenade && MaxMag > 0
+		&& InMag <= FMath::Max(2, FMath::RoundToInt(MaxMag * 0.25f));
+	const FLinearColor AmmoAccent = Player->bReloading ? ColGold : (bLow ? ColRed : ColWhite);
+
+	DrawPanel(AmmoX, AmmoY, AmmoW, RowH, AmmoAccent);
+
+	// Название над плашкой. Отступ считается от собственной высоты строки,
+	// а не фиксированными 20 пикселями: на малом масштабе подпись садилась
+	// на верхнюю кромку панели.
+	const FString WeaponLabel = Player->GetWeaponName().ToUpper();
+	float LblW = 0.f, LblH = 0.f;
+	GetTextSizeScaled(WeaponLabel, LblW, LblH, Small, 1.15f);
+	DrawTextScaled(WeaponLabel, ColDim, AmmoX + Pad, AmmoY - LblH - 6.f * S, Small, 1.15f);
+	// иконка выравнивается по низу с подписью, а не по своему отступу
+	DrawWeaponIcon(Canvas, AmmoX + AmmoW - 80.f * S, AmmoY - LblH - 22.f * S,
+		72.f * S, 24.f * S, Player->CurrentWeapon, ColWhite);
 
 	if (Player->bReloading)
 	{
-		DrawTextScaled(TEXT("ПЕРЕЗАРЯДКА..."), ColGold, AmmoX, AmmoY + 10.f, Big, 1.4f);
+		DrawTextCentered(TEXT("ПЕРЕЗАРЯДКА"), ColGold,
+			AmmoX + AmmoW * 0.5f, AmmoY + RowH * 0.5f, Big, 1.3f);
 		return;
 	}
 
-	DrawWeaponIcon(Canvas, AmmoX + 96.f, AmmoY - 32.f, 76.f, 28.f, Player->CurrentWeapon, ColWhite);
-	DrawTextScaled(Player->GetWeaponName().ToUpper(), ColDim, AmmoX + 110.f, AmmoY - 6.f, Small, 1.15f);
-
-	if (RSWeapons::IsGrenade(Player->CurrentWeapon))
+	if (bGrenade)
 	{
 		const int32 GI = RSWeapons::GrenadeIndex(Player->CurrentWeapon);
-		DrawTextScaled(FString::Printf(TEXT("x %d"), Player->Grenades[GI]), ColWhite, AmmoX, AmmoY + 6.f, Big, 2.0f);
+		DrawTextCentered(FString::Printf(TEXT("x %d"), Player->Grenades[GI]), ColWhite,
+			AmmoX + AmmoW * 0.5f, AmmoY + RowH * 0.5f, Big, 2.0f);
 		return;
 	}
 	if (Player->GetMaxAmmo() == 0)
 	{
-		DrawTextScaled(TEXT("—"), ColWhite, AmmoX, AmmoY + 6.f, Big, 2.0f);
+		DrawTextCentered(TEXT("—"), ColWhite,
+			AmmoX + AmmoW * 0.5f, AmmoY + RowH * 0.5f, Big, 2.0f);
 		return;
 	}
 
-	const int32 InMag = Player->GetAmmo();
-	const FLinearColor MagCol = InMag > 4 ? ColWhite : ColRed;
+	// В магазине — крупно, запас — мельче и приглушённо, обе строки по
+	// одной базовой линии. Раньше запас стоял на фиксированном сдвиге +60
+	// и налезал на число, когда в магазине было три цифры.
+	const FLinearColor MagCol = bLow ? ColRed : ColWhite;
+	const FString MagStr = FString::Printf(TEXT("%d"), InMag);
+	const FString ResStr = FString::Printf(TEXT("/ %d"), Player->GetReserveAmmo());
 
-	const FString AmmoMagStr = FString::Printf(TEXT("%d"), InMag);
-	DrawTextScaled(AmmoMagStr, MagCol, AmmoX, AmmoY, Big, 2.4f);
+	float MagW = 0.f, MagH = 0.f, ResW = 0.f, ResH = 0.f;
+	GetTextSizeScaled(MagStr, MagW, MagH, Big, 2.2f);
+	GetTextSizeScaled(ResStr, ResW, ResH, Small, 1.6f);
 
-	const FString AmmoResStr = FString::Printf(TEXT("/  %d"), Player->GetReserveAmmo());
-	DrawTextScaled(AmmoResStr, ColDim, AmmoX + 60.f, AmmoY + 14.f, Small, 1.6f);
+	const float BaseY = AmmoY + (RowH - MagH) * 0.5f;
+	DrawTextScaled(MagStr, MagCol, AmmoX + Pad, BaseY, Big, 2.2f);
+	DrawTextScaled(ResStr, ColDim, AmmoX + Pad + MagW + 10.f * S,
+		BaseY + (MagH - ResH), Small, 1.6f);
 }
 
 void ARSHUD::DrawAmmo(const ARSCharacter* Player)
@@ -1087,8 +1426,9 @@ void ARSHUD::DrawRoundInfo(const ARSCharacter* Player)
 	UFont* Font = RSFontMain();
 	UFont* Med = RSFontBig();
 
+	const float S = UIScale();
 	const float CX = Canvas->SizeX * 0.5f;
-	const float Y = 12.f;
+	const float Y = 12.f * S;
 
 	int32 AliveCT = 0, AliveT = 0;
 	for (TActorIterator<ARSCharacter> It(GetWorld()); It; ++It)
@@ -1107,64 +1447,64 @@ void ARSHUD::DrawRoundInfo(const ARSCharacter* Player)
 	}
 
 	// 5 Крупных карточек спецназа (CT) слева
-	const float CardW = 38.f;
-	const float CardH = 42.f;
-	const float CardGap = 4.f;
-	float CTX = CX - 65.f - (5 * (CardW + CardGap));
+	const float CardW = 38.f * S;
+	const float CardH = 42.f * S;
+	const float CardGap = 4.f * S;
+	const float CenterW = 132.f * S;
+	// Третьей строки больше нет, поэтому плашка стала ниже: с прежней
+	// высотой под счётом оставалась пустая полоса.
+	const float CenterH = CardH + 8.f * S;
+	const float SideGap = 10.f * S;
+	// карточки отталкиваются от края центральной плашки, а не от жёстких
+	// 65 пикселей: иначе при другом масштабе они на неё налезали
+	float CTX = CX - CenterW * 0.5f - SideGap - (5 * (CardW + CardGap));
 
 	for (int32 i = 0; i < 5; i++)
 	{
 		const bool bAlive = i < AliveCT;
 		const FLinearColor CardBg = bAlive ? FLinearColor(0.12f, 0.28f, 0.52f, 0.90f) : FLinearColor(0.04f, 0.05f, 0.07f, 0.65f);
 		DrawRect(CardBg, CTX, Y, CardW, CardH);
-		DrawRect(ColCT, CTX, Y, CardW, 4.f);
+		DrawRect(ColCT, CTX, Y, CardW, 4.f * S);
 
-		if (bAlive)
-		{
-			DrawTextScaled(TEXT("CT"), ColCT, CTX + 10.f, Y + 12.f, Font, 1.2f);
-		}
-		else
-		{
-			DrawTextScaled(TEXT("X"), FLinearColor(0.4f, 0.4f, 0.4f), CTX + 13.f, Y + 12.f, Font, 1.2f);
-		}
+		DrawTextCentered(bAlive ? TEXT("CT") : TEXT("X"),
+			bAlive ? ColCT : FLinearColor(0.4f, 0.4f, 0.4f),
+			CTX + CardW * 0.5f, Y + CardH * 0.5f + 2.f * S, Font, 1.2f);
 		CTX += CardW + CardGap;
 	}
 
 	// Центральный таймер и счёт
-	const float CenterW = 120.f;
 	const float CenterX = CX - CenterW * 0.5f;
-	DrawRect(ColBgDark, CenterX, Y, CenterW, CardH + 18.f);
-	DrawBoxOutline(CenterX, Y, CenterW, CardH + 18.f, ColBorder, 1.5f);
+	DrawRect(ColBgDark, CenterX, Y, CenterW, CenterH);
+	DrawBoxOutline(CenterX, Y, CenterW, CenterH, ColBorder, FMath::Max(1.f, 1.5f * S));
 
 	const int32 Left = FMath::CeilToInt(State->GetTimeLeft());
 	const FString TimerStr = FString::Printf(TEXT("%d:%02d"), Left / 60, Left % 60);
 	const bool bUrgent = State->Phase == ERSPhase::Live && Left <= 10;
 
-	DrawTextScaled(TimerStr, bUrgent ? ColRed : ColWhite, CenterX + 26.f, Y + 4.f, Med, 1.5f);
+	// Три строки центрируются по середине плашки. Раньше каждая стояла на
+	// своём сдвиге (+26, +40, +41), подобранном под конкретную ширину строки,
+	// и таймер «10:05» вылезал за рамку, а нижняя строка обрезалась.
+	DrawTextCentered(TimerStr, bUrgent ? ColRed : ColWhite,
+		CX, Y + 15.f * S, Med, 1.5f);
 
 	const FString ScoreStr = FString::Printf(TEXT("%d   %d"), State->ScoreCT, State->ScoreT);
-	DrawTextScaled(ScoreStr, ColWhite, CenterX + 40.f, Y + 28.f, Font, 1.3f);
-
-	// живые по сторонам, а не подпись «5 vs 5» на все случаи жизни
-	DrawTextScaled(FString::Printf(TEXT("%d — %d"), AliveCT, AliveT), ColDim, CenterX + 41.f, Y + 44.f, Font, 0.95f);
+	DrawTextCentered(ScoreStr, ColWhite, CX, Y + 36.f * S, Font, 1.3f);
+	// Строку «живые по сторонам» убрали по просьбе: то же самое уже видно
+	// по карточкам CT и T слева и справа, а третья строка только жала
+	// таймер со счётом.
 
 	// 5 Крупных карточек террористов (T) справа
-	float TX = CX + 65.f;
+	float TX = CX + CenterW * 0.5f + SideGap;
 	for (int32 i = 0; i < 5; i++)
 	{
 		const bool bAlive = i < AliveT;
 		const FLinearColor CardBg = bAlive ? FLinearColor(0.52f, 0.36f, 0.12f, 0.90f) : FLinearColor(0.04f, 0.05f, 0.07f, 0.65f);
 		DrawRect(CardBg, TX, Y, CardW, CardH);
-		DrawRect(ColT, TX, Y, CardW, 4.f);
+		DrawRect(ColT, TX, Y, CardW, 4.f * S);
 
-		if (bAlive)
-		{
-			DrawTextScaled(TEXT("T"), ColT, TX + 13.f, Y + 12.f, Font, 1.2f);
-		}
-		else
-		{
-			DrawTextScaled(TEXT("X"), FLinearColor(0.4f, 0.4f, 0.4f), TX + 13.f, Y + 12.f, Font, 1.2f);
-		}
+		DrawTextCentered(bAlive ? TEXT("T") : TEXT("X"),
+			bAlive ? ColT : FLinearColor(0.4f, 0.4f, 0.4f),
+			TX + CardW * 0.5f, Y + CardH * 0.5f + 2.f * S, Font, 1.2f);
 		TX += CardW + CardGap;
 	}
 
@@ -1174,12 +1514,14 @@ void ARSHUD::DrawRoundInfo(const ARSCharacter* Player)
 		const FString BuyMsg = FString::Printf(TEXT("ВРЕМЯ ЗАКУПКИ (%d с) — Удерживай [ B ]"), Left);
 		float TW = 0.f, TH = 0.f;
 		GetTextSizeScaled(BuyMsg, TW, TH, Font, 1.3f);
-		const float BX = CX - TW * 0.5f;
-		const float BY = Y + CardH + 28.f;
+		const float BW = TW + 32.f * S;
+		const float BH = TH + 12.f * S;
+		const float BX = CX - BW * 0.5f;
+		const float BY = Y + CenterH + 14.f * S;
 
-		DrawRect(FLinearColor(0.04f, 0.05f, 0.07f, 0.90f), BX - 16.f, BY - 4.f, TW + 32.f, 28.f);
-		DrawBoxOutline(BX - 16.f, BY - 4.f, TW + 32.f, 28.f, ColGold, 1.5f);
-		DrawTextScaled(BuyMsg, ColGold, BX, BY, Font, 1.3f);
+		DrawRect(FLinearColor(0.04f, 0.05f, 0.07f, 0.90f), BX, BY, BW, BH);
+		DrawBoxOutline(BX, BY, BW, BH, ColGold, FMath::Max(1.f, 1.5f * S));
+		DrawTextCentered(BuyMsg, ColGold, CX, BY + BH * 0.5f, Font, 1.3f);
 	}
 }
 
@@ -1194,21 +1536,29 @@ void ARSHUD::DrawScoreboard(const ARSCharacter* Player)
 	UFont* Font = RSFontMain();
 	UFont* Med = RSFontBig();
 
-	const float W = 780.f;
+	const float S = UIScale();
+	const float W = 780.f * S;
 	const float X = Canvas->SizeX * 0.5f - W * 0.5f;
 	const float Top = Canvas->SizeY * 0.15f;
+	const float RowStep = 24.f * S;
+	const float HalfW = W * 0.5f - 20.f * S;
+	// Числовые колонки прижаты к правому краю своей половины, имени достаётся
+	// всё остальное. Раньше все три стояли на отступах 150/195/240 от начала
+	// колонки: имя зажималось в 150 пикселей и обрезалось многоточием, а
+	// справа пустовала треть таблицы.
+	const float ColKRight = HalfW - 150.f * S;
+	const float ColDRight = HalfW - 95.f * S;
+	const float ColMRight = HalfW;
+	const float NameW = ColKRight - 30.f * S;
 
-	DrawRect(ColBgSolid, X - 20.f, Top - 20.f, W + 40.f, 440.f);
-	DrawBoxOutline(X - 20.f, Top - 20.f, W + 40.f, 440.f, ColBorder, 1.5f);
-
-	if (State)
+	// правое выравнивание: числа в таблице должны стоять колонкой
+	auto DrawRight = [&](const FString& Text, const FLinearColor& Color,
+		float RightX, float TextY, float TextScale)
 	{
-		const FString Title = FString::Printf(TEXT("CT  %d : %d  T     РАУНД %d / %d"),
-			State->ScoreCT, State->ScoreT, State->RoundNumber, State->RoundsTotal);
 		float TW = 0.f, TH = 0.f;
-		GetTextSizeScaled(Title, TW, TH, Med, 1.5f);
-		DrawTextScaled(Title, ColGold, Canvas->SizeX * 0.5f - TW * 0.5f, Top - 10.f, Med, 1.5f);
-	}
+		GetTextSizeScaled(Text, TW, TH, Font, TextScale);
+		DrawTextScaled(Text, Color, RightX - TW, TextY, Font, TextScale);
+	};
 
 	struct FRow { FString Name; int32 Kills; int32 Deaths; bool bAlive; bool bYou; int32 Money; };
 	TArray<FRow> Columns[2];
@@ -1234,15 +1584,36 @@ void ARSHUD::DrawScoreboard(const ARSCharacter* Player)
 	const TCHAR* Titles[2] = { TEXT("КОНТР-ТЕРРОРИСТЫ"), TEXT("ТЕРРОРИСТЫ") };
 	const FLinearColor TeamColors[2] = { ColCT, ColT };
 
+	// Высота панели по фактическому числу строк, а не константой 440
+	const int32 MaxRows = FMath::Max(Columns[0].Num(), Columns[1].Num());
+	const float PanelH = (30.f + 26.f + 22.f) * S + MaxRows * RowStep + 40.f * S;
+	DrawRect(ColBgSolid, X - 20.f * S, Top - 20.f * S, W + 40.f * S, PanelH);
+	DrawBoxOutline(X - 20.f * S, Top - 20.f * S, W + 40.f * S, PanelH, ColBorder, FMath::Max(1.f, 1.5f * S));
+
+	if (State)
+	{
+		const FString Title = FString::Printf(TEXT("CT  %d : %d  T     РАУНД %d / %d"),
+			State->ScoreCT, State->ScoreT, State->RoundNumber, State->RoundsTotal);
+		DrawTextCentered(Title, ColGold, Canvas->SizeX * 0.5f, Top - 10.f * S + 8.f * S, Med, 1.5f);
+	}
+
 	for (int32 Side = 0; Side < 2; Side++)
 	{
-		const float ColX = X + Side * (W * 0.5f + 10.f);
-		float Y = Top + 30.f;
+		const float ColX = X + Side * (W * 0.5f + 10.f * S);
+		float Y = Top + 30.f * S;
 
 		DrawTextScaled(Titles[Side], TeamColors[Side], ColX, Y, Font, 1.4f);
-		Y += 26.f;
-		DrawTextScaled(TEXT("ИМЯ            У    С    $"), FLinearColor(1.f, 1.f, 1.f, 0.45f), ColX, Y, Font, 1.1f);
-		Y += 22.f;
+		Y += 26.f * S;
+
+		// Шапка колонок раньше была одной строкой с выравниванием пробелами,
+		// а данные стояли на числовых отступах. С пропорциональным шрифтом
+		// это не совпадало никогда, а с широким разъехалось окончательно.
+		const FLinearColor HeadCol(1.f, 1.f, 1.f, 0.45f);
+		DrawTextScaled(TEXT("ИМЯ"), HeadCol, ColX, Y, Font, 1.1f);
+		DrawRight(TEXT("У"), HeadCol, ColX + ColKRight, Y, 1.1f);
+		DrawRight(TEXT("С"), HeadCol, ColX + ColDRight, Y, 1.1f);
+		DrawRight(TEXT("$"), HeadCol, ColX + ColMRight, Y, 1.1f);
+		Y += 22.f * S;
 
 		for (const FRow& Row : Columns[Side])
 		{
@@ -1250,14 +1621,29 @@ void ARSHUD::DrawScoreboard(const ARSCharacter* Player)
 				? FLinearColor(0.45f, 0.45f, 0.45f)
 				: (Row.bYou ? ColGold : ColWhite);
 
-			DrawTextScaled(Row.Name, Color, ColX, Y, Font, 1.25f);
-			DrawTextScaled(FString::Printf(TEXT("%d"), Row.Kills), Color, ColX + 150.f, Y, Font, 1.25f);
-			DrawTextScaled(FString::Printf(TEXT("%d"), Row.Deaths), Color, ColX + 195.f, Y, Font, 1.25f);
+			// Длинный ник обрезаем: иначе он наезжает на колонку убийств.
+			// Ник задаётся игроком и ничем не ограничен.
+			FString Name = Row.Name;
+			float NW = 0.f, NH = 0.f;
+			GetTextSizeScaled(Name, NW, NH, Font, 1.25f);
+			while (NW > NameW && Name.Len() > 3)
+			{
+				Name.LeftInline(Name.Len() - 1, EAllowShrinking::No);
+				GetTextSizeScaled(Name + TEXT("…"), NW, NH, Font, 1.25f);
+			}
+			if (Name.Len() != Row.Name.Len())
+			{
+				Name += TEXT("…");
+			}
+
+			DrawTextScaled(Name, Color, ColX, Y, Font, 1.25f);
+			DrawRight(FString::Printf(TEXT("%d"), Row.Kills), Color, ColX + ColKRight, Y, 1.25f);
+			DrawRight(FString::Printf(TEXT("%d"), Row.Deaths), Color, ColX + ColDRight, Y, 1.25f);
 			if (Row.Money >= 0)
 			{
-				DrawTextScaled(FString::Printf(TEXT("%d"), Row.Money), Color, ColX + 240.f, Y, Font, 1.25f);
+				DrawRight(FString::Printf(TEXT("%d"), Row.Money), Color, ColX + ColMRight, Y, 1.25f);
 			}
-			Y += 24.f;
+			Y += RowStep;
 		}
 	}
 }
@@ -1277,18 +1663,90 @@ void ARSHUD::DrawBuyMenu(const ARSCharacter* Player)
 	const bool bBuyTime = State->IsBuyTime();
 
 	const int32 NumCols = RSWeapons::BuyCategories;
-	const float ColW = 160.f;
-	const float ColGap = 12.f;
+	const float S = UIScale();
+	const float ColGap = 12.f * S;
+	const float HeaderH = 30.f * S;
+
+	// Карточка делится на три зоны, и все они считаются от измеренного
+	// текста: название сверху, иконка в середине, цена снизу. Раньше зоны
+	// стояли на фиксированных отступах, и при широком шрифте название
+	// ложилось прямо на силуэт ствола.
+	float ProbeW = 0.f, NameH = 0.f, PriceH = 0.f;
+	GetTextSizeScaled(TEXT("Ap"), ProbeW, NameH, Font, 1.1f);
+	GetTextSizeScaled(TEXT("$0"), ProbeW, PriceH, Font, 1.05f);
+	// Высота зоны иконки — единственное, что задаёт их размер: при вписывании
+	// по пропорциям всё упирается именно в неё. Квадратные силуэты (гранаты,
+	// броня) получают ровно IconH по обеим сторонам, поэтому на низкой зоне
+	// они выглядели крошечными рядом с вытянутыми стволами.
+	const float IconH = 42.f * S;
+	// зазоры по 6 пикселей: при четырёх иконка касалась названия, а
+	// «КУПЛЕНО» подрезалось нижней кромкой карточки
+	const float Gap = 6.f * S;
+	const float CardH = 4.f * S + NameH + Gap + IconH + Gap + PriceH + Gap;
+	const float CardStep = CardH + 8.f * S;
+	const float IconY = 4.f * S + NameH + Gap;    // от верха карточки
+	const float PriceY = CardH - PriceH - Gap;
+
+	// Ширину колонки считаем по самому длинному тексту, который в неё попадёт.
+	// Раньше стояли жёсткие 160 px, подобранные под встроенный шрифт; у
+	// векторного глифы шире, и «ПП и дробовики» с «Снайперские» вылезали за
+	// карточку, а названия стволов наезжали на иконки.
+	float ColW = 150.f * S;
+	{
+		auto Fit = [&](const FString& Text, float TextScale, float LeftPad)
+		{
+			float TW = 0.f, TH = 0.f;
+			GetTextSizeScaled(Text, TW, TH, Font, TextScale);
+			ColW = FMath::Max(ColW, LeftPad + TW + 10.f * S);
+		};
+		for (int32 c = 0; c < NumCols; c++)
+		{
+			Fit(FString::Printf(TEXT("%d  %s"), c + 1, RSWeapons::BuyCategoryName(c)), 1.2f, 8.f * S);
+			if (c == RSWeapons::EquipmentCategory)
+			{
+				Fit(TEXT("Кевлар + шлем"), 1.1f, 20.f * S);
+				continue;
+			}
+			for (ERSWeapon Wp : RSWeapons::BuyCategory(c, Player->Team))
+			{
+				Fit(RSWeapons::Get(Wp).Name, 1.1f, 20.f * S);
+			}
+		}
+	}
+
 	const float TotalW = NumCols * ColW + (NumCols - 1) * ColGap;
 	const float StartX = Canvas->SizeX * 0.5f - TotalW * 0.5f;
 	const float StartY = Canvas->SizeY * 0.16f;
 
-	DrawRect(ColBgSolid, StartX - 24.f, StartY - 45.f, TotalW + 48.f, 500.f);
-	DrawBoxOutline(StartX - 24.f, StartY - 45.f, TotalW + 48.f, 500.f, ColBorder, 1.5f);
+	// Высота панели — по самой длинной колонке. При константе 500 нижняя
+	// подсказка упиралась в край панели и обрезалась.
+	int32 MaxItems = 2;
+	for (int32 c = 0; c < NumCols; c++)
+	{
+		if (c == RSWeapons::EquipmentCategory)
+		{
+			continue;
+		}
+		MaxItems = FMath::Max(MaxItems,
+			FMath::Min(RSWeapons::BuyCategory(c, Player->Team).Num(), 6));
+	}
+	const float ContentH = HeaderH + 8.f * S + MaxItems * CardStep;
+	const float HintY = StartY + ContentH + 14.f * S;
+	const float PanelTop = StartY - 45.f * S;
+	const float PanelH = HintY + 30.f * S - PanelTop;
+
+	DrawRect(ColBgSolid, StartX - 24.f * S, PanelTop, TotalW + 48.f * S, PanelH);
+	DrawBoxOutline(StartX - 24.f * S, PanelTop, TotalW + 48.f * S, PanelH, ColBorder, FMath::Max(1.f, 1.5f * S));
 
 	const int32 Left = FMath::CeilToInt(State->GetTimeLeft());
-	DrawTextScaled(FString::Printf(TEXT("До конца закупки  %02d:%02d"), Left / 60, Left % 60), ColDim, StartX, StartY - 35.f, Font, 1.3f);
-	DrawTextScaled(FString::Printf(TEXT("$ %d"), Player->Money), ColCSGreen, StartX + TotalW - 100.f, StartY - 35.f, Med, 1.5f);
+	DrawTextScaled(FString::Printf(TEXT("До конца закупки  %02d:%02d"), Left / 60, Left % 60),
+		ColDim, StartX, StartY - 35.f * S, Font, 1.3f);
+
+	// сумма прижата к правому краю по факту измерения, а не сдвигом на 100
+	const FString MoneyStr = FString::Printf(TEXT("$ %d"), Player->Money);
+	float MnW = 0.f, MnH = 0.f;
+	GetTextSizeScaled(MoneyStr, MnW, MnH, Med, 1.5f);
+	DrawTextScaled(MoneyStr, ColCSGreen, StartX + TotalW - MnW, StartY - 35.f * S, Med, 1.5f);
 
 	// с клавиатуры покупка в два шага (категория, потом предмет),
 	// мышью — сразу по карточке; зоны для кликов собираем здесь же
@@ -1307,21 +1765,25 @@ void ARSHUD::DrawBuyMenu(const ARSCharacter* Player)
 
 		FRSBuyHotspot Header;
 		Header.Min = FVector2D(CX, CY);
-		Header.Max = FVector2D(CX + ColW, CY + 30.f);
+		Header.Max = FVector2D(CX + ColW, CY + HeaderH);
 		Header.Category = c;
 		Header.Kind = -2;
 		BuyHotspots.Add(Header);
 
 		const bool bHoverHeader = bHasMouse && Header.Contains(Mouse);
 		DrawRect((bActive || bHoverHeader) ? FLinearColor(0.20f, 0.16f, 0.03f, 0.95f)
-			: FLinearColor(0.04f, 0.05f, 0.07f, 0.92f), CX, CY, ColW, 30.f);
+			: FLinearColor(0.04f, 0.05f, 0.07f, 0.92f), CX, CY, ColW, HeaderH);
 		if (bActive || bHoverHeader)
 		{
-			DrawBoxOutline(CX, CY, ColW, 30.f, ColGold, 1.5f);
+			DrawBoxOutline(CX, CY, ColW, HeaderH, ColGold, FMath::Max(1.f, 1.5f * S));
 		}
-		DrawTextScaled(FString::Printf(TEXT("%d  %s"), c + 1, RSWeapons::BuyCategoryName(c)),
-			ColWhite, CX + 8.f, CY + 5.f, Font, 1.2f);
-		CY += 38.f;
+		{
+			const FString HeadStr = FString::Printf(TEXT("%d  %s"), c + 1, RSWeapons::BuyCategoryName(c));
+			float HdW = 0.f, HdH = 0.f;
+			GetTextSizeScaled(HeadStr, HdW, HdH, Font, 1.2f);
+			DrawTextScaled(HeadStr, ColWhite, CX + 8.f * S, CY + (HeaderH - HdH) * 0.5f, Font, 1.2f);
+		}
+		CY += HeaderH + 8.f * S;
 
 		TArray<ERSWeapon> Items;
 		if (c == RSWeapons::EquipmentCategory)
@@ -1338,7 +1800,7 @@ void ARSHUD::DrawBuyMenu(const ARSCharacter* Player)
 
 				FRSBuyHotspot Spot;
 				Spot.Min = FVector2D(CX, CY);
-				Spot.Max = FVector2D(CX + ColW, CY + 62.f);
+				Spot.Max = FVector2D(CX + ColW, CY + CardH);
 				Spot.Category = c;
 				Spot.Kind = (int8)i; // 0 кевлар, 1 кевлар со шлемом
 				BuyHotspots.Add(Spot);
@@ -1350,24 +1812,35 @@ void ARSHUD::DrawBuyMenu(const ARSCharacter* Player)
 					CardBg = FLinearColor(0.12f, 0.22f, 0.14f, 0.95f);
 				}
 
-				DrawRect(CardBg, CX, CY, ColW, 62.f);
-				DrawBoxOutline(CX, CY, ColW, 62.f, bCan ? ColCSGreen : ColBorder, bHover ? 2.f : 1.f);
+				DrawRect(CardBg, CX, CY, ColW, CardH);
+				DrawBoxOutline(CX, CY, ColW, CardH, bCan ? ColCSGreen : ColBorder,
+					bHover ? FMath::Max(1.5f, 2.f * S) : FMath::Max(1.f, S));
 
-				DrawTextScaled(FString::Printf(TEXT("%d"), i + 1), ColDim, CX + 6.f, CY + 4.f, Font, 1.0f);
-				DrawTextScaled(EItems[i].Name, bCan ? ColWhite : ColDim, CX + 20.f, CY + 4.f, Font, 1.1f);
-				DrawEquipIcon(Canvas, CX + ColW - 46.f, CY + 18.f, 38.f, 38.f,
+				DrawTextScaled(FString::Printf(TEXT("%d"), i + 1), ColDim, CX + 6.f * S, CY + 4.f * S, Font, 1.0f);
+				DrawTextScaled(EItems[i].Name, bCan ? ColWhite : ColDim, CX + 20.f * S, CY + 4.f * S, Font, 1.1f);
+				// Иконка живёт в средней зоне, как у оружия: раньше она
+				// стояла справа во всю высоту и цена ложилась на неё.
+				// Бокс шире квадрата — кевлар вытянут по вертикали, и в
+				// квадрате его ограничивала бы высота вдвое сильнее нужного.
+				DrawEquipIcon(Canvas, CX + ColW - IconH * 1.6f - 8.f * S, CY + IconY,
+					IconH * 1.6f, IconH,
 					(i == 0) ? RSIcons::Kevlar() : RSIcons::Helmet(),
 					bCan ? ColWhite : FLinearColor(0.65f, 0.65f, 0.65f, 0.75f));
 
 				if (EItems[i].bOwned)
 				{
-					DrawTextScaled(TEXT("КУПЛЕНО"), ColCSGreen, CX + 8.f, CY + 38.f, Font, 1.05f);
+					DrawTextScaled(TEXT("КУПЛЕНО"), ColCSGreen, CX + 8.f * S, CY + PriceY, Font, 1.05f);
 				}
 				else
 				{
-					DrawTextScaled(FString::Printf(TEXT("$%d"), EItems[i].Price), bCan ? ColCSGreen : ColDim, CX + ColW - 56.f, CY + 38.f, Font, 1.1f);
+					// цена прижата к правому краю карточки по измерению
+					const FString PriceStr = FString::Printf(TEXT("$%d"), EItems[i].Price);
+					float PW = 0.f, PH = 0.f;
+					GetTextSizeScaled(PriceStr, PW, PH, Font, 1.05f);
+					DrawTextScaled(PriceStr, bCan ? ColCSGreen : ColDim,
+						CX + ColW - PW - 8.f * S, CY + PriceY, Font, 1.05f);
 				}
-				CY += 70.f;
+				CY += CardStep;
 			}
 			continue;
 		}
@@ -1388,7 +1861,7 @@ void ARSHUD::DrawBuyMenu(const ARSCharacter* Player)
 
 			FRSBuyHotspot Spot;
 			Spot.Min = FVector2D(CX, CY);
-			Spot.Max = FVector2D(CX + ColW, CY + 62.f);
+			Spot.Max = FVector2D(CX + ColW, CY + CardH);
 			Spot.Category = c;
 			Spot.Weapon = Items[i];
 			Spot.Kind = -1;
@@ -1400,24 +1873,32 @@ void ARSHUD::DrawBuyMenu(const ARSCharacter* Player)
 			{
 				CardBg = FLinearColor(0.12f, 0.22f, 0.14f, 0.95f);
 			}
-			DrawRect(CardBg, CX, CY, ColW, 62.f);
-			DrawBoxOutline(CX, CY, ColW, 62.f, bCan ? ColCSGreen : ColBorder, bHover ? 2.f : 1.f);
+			DrawRect(CardBg, CX, CY, ColW, CardH);
+			DrawBoxOutline(CX, CY, ColW, CardH, bCan ? ColCSGreen : ColBorder,
+				bHover ? FMath::Max(1.5f, 2.f * S) : FMath::Max(1.f, S));
 
-			DrawTextScaled(FString::Printf(TEXT("%d"), i + 1), ColDim, CX + 6.f, CY + 4.f, Font, 1.0f);
-			DrawTextScaled(Def.Name, bCan ? ColWhite : ColDim, CX + 20.f, CY + 4.f, Font, 1.1f);
+			DrawTextScaled(FString::Printf(TEXT("%d"), i + 1), ColDim, CX + 6.f * S, CY + 4.f * S, Font, 1.0f);
+			DrawTextScaled(Def.Name, bCan ? ColWhite : ColDim, CX + 20.f * S, CY + 4.f * S, Font, 1.1f);
 
-			DrawWeaponIcon(Canvas, CX + 8.f, CY + 20.f, ColW - 16.f, 24.f, Items[i],
+			// Иконка живёт в своей зоне между названием и ценой: при широком
+			// шрифте она начиналась на той же высоте, что и текст, и силуэт
+			// ствола перечёркивал название.
+			DrawWeaponIcon(Canvas, CX + 8.f * S, CY + IconY, ColW - 16.f * S, IconH, Items[i],
 				bCan ? ColWhite : FLinearColor(0.65f, 0.65f, 0.65f, 0.75f));
 
 			if (bOwned)
 			{
-				DrawTextScaled(TEXT("КУПЛЕНО"), ColCSGreen, CX + 8.f, CY + 40.f, Font, 1.0f);
+				DrawTextScaled(TEXT("КУПЛЕНО"), ColCSGreen, CX + 8.f * S, CY + PriceY, Font, 1.0f);
 			}
 			else
 			{
-				DrawTextScaled(FString::Printf(TEXT("$%d"), Def.Price), bCan ? ColCSGreen : ColDim, CX + ColW - 56.f, CY + 40.f, Font, 1.05f);
+				const FString PriceStr = FString::Printf(TEXT("$%d"), Def.Price);
+				float PW = 0.f, PH = 0.f;
+				GetTextSizeScaled(PriceStr, PW, PH, Font, 1.05f);
+				DrawTextScaled(PriceStr, bCan ? ColCSGreen : ColDim,
+					CX + ColW - PW - 8.f * S, CY + PriceY, Font, 1.05f);
 			}
-			CY += 70.f;
+			CY += CardStep;
 		}
 	}
 
@@ -1426,11 +1907,11 @@ void ARSHUD::DrawBuyMenu(const ARSCharacter* Player)
 		? FString(TEXT("ЛКМ — купить      цифра 1-6 — категория      отпусти B — закрыть"))
 		: FString::Printf(TEXT("ЛКМ — купить      «%s»: цифра — купить      [0] назад      отпусти B — закрыть"),
 			RSWeapons::BuyCategoryName(Chosen));
-	DrawTextScaled(Hint, ColDim, StartX, StartY + 440.f, Font, 1.15f);
+	DrawTextScaled(Hint, ColDim, StartX, HintY, Font, 1.15f);
 
 	if (!bBuyTime)
 	{
 		DrawTextScaled(TEXT("Покупать можно только между раундами"), ColRed,
-			StartX, StartY + 418.f, Font, 1.15f);
+			StartX, HintY - 22.f * S, Font, 1.15f);
 	}
 }

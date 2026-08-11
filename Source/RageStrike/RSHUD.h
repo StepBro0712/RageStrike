@@ -47,7 +47,14 @@ private:
 	TArray<TPair<int32, FBox2D>> CheatSettingHotspots;
 	bool GetMouseOnCanvas(FVector2D& Out) const;
 
+	// Вся вёрстка HUD писалась в пикселях под 1080p, поэтому размеры
+	// множатся на отношение высоты экрана к эталонной. На 1080p даёт
+	// ровно единицу — там ничего не меняется.
+	float UIScale() const;
+
 	void DrawCrosshair(const ARSCharacter* Player);
+	// сглаженный зазор прицела; -1 = ещё не инициализирован
+	float CrossGapShown = -1.f;
 	void DrawSniperScope(const ARSCharacter* Player);
 	void DrawESP(const ARSCharacter* Player);
 	// лента событий чита: урон, промахи и причины отказа стрелять
@@ -79,6 +86,14 @@ private:
 	float ShownGPUPct = 0.f;
 
 	void DrawBoxOutline(float X, float Y, float W, float H, const FLinearColor& Color, float Thickness);
+	// Единая плашка HUD: тёмный фон, тонкая рамка и цветная полоса слева.
+	// До неё каждая панель рисовала фон сама, отсюда разные высоты, отступы
+	// и толщина рамки на соседних блоках.
+	void DrawPanel(float X, float Y, float W, float H, const FLinearColor& Accent);
+	// текст, выровненный по центру прямоугольника — избавляет от подгонки
+	// позиции магическими сдвигами, которая ломается при смене шрифта
+	void DrawTextCentered(const FString& Text, FLinearColor Color, float CX, float CY,
+		class UFont* Font, float Scale);
 	void DrawRoundInfo(const ARSCharacter* Player);
 	void DrawBuyMenu(const ARSCharacter* Player);
 	void DrawScoreboard(const ARSCharacter* Player);

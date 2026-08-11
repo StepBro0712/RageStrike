@@ -20,6 +20,23 @@ class ARSBot;
 int32 RSKillReward(ERSWeapon W);
 FString RSCombatantName(const AActor* Who);
 
+// Обстоятельства убийства для killfeed. Хранятся битовой маской: строка может
+// нести сразу несколько значков — например хедшот вслепую сквозь дым.
+namespace RSKill
+{
+	enum : uint8
+	{
+		Headshot = 1 << 0,
+		Noscope  = 1 << 1,   // снайперка без прицела
+		Blind    = 1 << 2,   // убийца сам был ослеплён
+		Smoke    = 1 << 3,   // между убийцей и жертвой стоял дым
+	};
+}
+
+// Считает маску по состоянию убийцы и жертвы в момент смерти. Работает и для
+// игрока, и для бота: классы разные, а признаки одни и те же.
+uint8 RSComputeKillFlags(const AActor* Killer, const AActor* Victim, bool bHeadshot);
+
 UCLASS()
 class RAGESTRIKE_API ARSCharacter : public ACharacter
 {
