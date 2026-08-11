@@ -3,7 +3,7 @@
 import os
 import unreal
 
-SRC = r"C:\Dev\RageStrike\ImportSource\GeneratedAudio"
+SRC = r"C:\Dev\RageStrike\ImportSource\_Generated\GeneratedAudio"
 DEST = "/Game/Audio"
 LOOPING = {"Music_Menu", "Music_Buy", "Burn"}
 

@@ -3,7 +3,7 @@
 Настоящих записей у нас нет, поэтому синтезируем: шумовые всплески с
 затуханием для выстрелов, щелчки для перезарядки, глухие удары для шагов,
 низкий бум для взрыва, простые петли для музыки. Результат — в
-ImportSource/GeneratedAudio, оттуда его забирает import_sounds.py.
+ImportSource/_Generated/GeneratedAudio, оттуда его забирает import_sounds.py.
 
 Запуск:  python Scripts/make_sounds.py
 """
@@ -14,7 +14,7 @@ import random
 import struct
 import wave
 
-OUT = r"C:\Dev\RageStrike\ImportSource\GeneratedAudio"
+OUT = r"C:\Dev\RageStrike\ImportSource\_Generated\GeneratedAudio"
 RATE = 44100
 
 os.makedirs(OUT, exist_ok=True)

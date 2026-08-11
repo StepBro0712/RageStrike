@@ -10,7 +10,7 @@ import unreal
 MAPS = [
     {
         "name": "Dust2",
-        "file": r"C:\Dev\RageStrike\ImportSource\dust 2\extracted\de_dust_2_with_real_light.glb",
+        "file": r"C:\Dev\RageStrike\ImportSource\Maps\dust2\extracted\de_dust_2_with_real_light.glb",
     },
 ]
 

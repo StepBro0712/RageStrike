@@ -16,13 +16,13 @@ IMPORT_ROOT = r"C:\Dev\RageStrike\ImportSource"
 WEAPONS = [
     {
         "name": "Sniper",
-        "fbx": r"C:\Dev\RageStrike\ImportSource\Sniper\Assets\SKM_SniperR700.fbx",
-        "textures": r"C:\Dev\RageStrike\ImportSource\Sniper\Assets",
+        "fbx": r"C:\Dev\RageStrike\ImportSource\Weapons\Sniper\Assets\SKM_SniperR700.fbx",
+        "textures": r"C:\Dev\RageStrike\ImportSource\Weapons\Sniper\Assets",
     },
     {
         "name": "Knife",
-        "fbx": r"C:\Dev\RageStrike\ImportSource\Knife\MeleeWeaponsPack#1\Combat_Knife\Combat_Knife.fbx",
-        "textures": r"C:\Dev\RageStrike\ImportSource\Knife\MeleeWeaponsPack#1\Combat_Knife",
+        "fbx": r"C:\Dev\RageStrike\ImportSource\Weapons\Knife\MeleeWeaponsPack#1\Combat_Knife\Combat_Knife.fbx",
+        "textures": r"C:\Dev\RageStrike\ImportSource\Weapons\Knife\MeleeWeaponsPack#1\Combat_Knife",
     },
 ]
 

@@ -3,7 +3,7 @@
 import os
 import unreal
 
-SRC = r"C:\Dev\RageStrike\ImportSource\GeneratedIcons"
+SRC = r"C:\Dev\RageStrike\ImportSource\_Generated\GeneratedIcons"
 DEST = "/Game/UI/Icons"
 
 files = [os.path.join(SRC, f) for f in sorted(os.listdir(SRC))

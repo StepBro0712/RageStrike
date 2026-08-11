@@ -8,8 +8,8 @@ import os
 import re
 import unreal
 
-WEAPON_SRC = r"C:\Dev\RageStrike\ImportSource\weaponsounds"
-STEP_SRC = r"C:\Dev\RageStrike\ImportSource\footsteps\Footsteps"
+WEAPON_SRC = r"C:\Dev\RageStrike\ImportSource\Audio\weaponsounds"
+STEP_SRC = r"C:\Dev\RageStrike\ImportSource\Audio\footsteps\Footsteps"
 DEST = "/Game/Audio/CS"
 
 # имя в игре -> папка CS

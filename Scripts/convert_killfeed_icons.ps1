@@ -4,8 +4,8 @@
 #
 # Кадр квадратный: значки killfeed в CS2 близки к квадрату, а object-fit
 # сохраняет пропорции внутри него.
-$src = "C:\Dev\RageStrike\ImportSource\killfied"
-$dst = "C:\Dev\RageStrike\ImportSource\GeneratedIcons"
+$src = "C:\Dev\RageStrike\ImportSource\Icons\killfeed"
+$dst = "C:\Dev\RageStrike\ImportSource\_Generated\GeneratedIcons"
 $tmp = Join-Path $env:TEMP "rs_kficons"
 New-Item -ItemType Directory -Force $dst | Out-Null
 New-Item -ItemType Directory -Force $tmp | Out-Null

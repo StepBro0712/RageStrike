@@ -1,8 +1,8 @@
 # Иконки CS2 лежат в SVG, а Unreal их не читает. Рисуем каждую в PNG через
 # headless-браузер (Edge есть в любой Windows 11). SVG узкие и белые, поэтому
 # оборачиваем в HTML: масштабируем по размеру кадра и сохраняем прозрачный фон.
-$src = "C:\Dev\RageStrike\ImportSource\cs 2 icons\counter-strike-icons-main\cs2\panorama\images\icons\equipment"
-$dst = "C:\Dev\RageStrike\ImportSource\GeneratedIcons"
+$src = "C:\Dev\RageStrike\ImportSource\Icons\cs2-icons\counter-strike-icons-main\cs2\panorama\images\icons\equipment"
+$dst = "C:\Dev\RageStrike\ImportSource\_Generated\GeneratedIcons"
 $tmp = Join-Path $env:TEMP "rs_icons"
 New-Item -ItemType Directory -Force $dst | Out-Null
 New-Item -ItemType Directory -Force $tmp | Out-Null
