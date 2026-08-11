@@ -11,6 +11,10 @@
 #include "GameFramework/PlayerStart.h"
 #include "Engine/StaticMeshActor.h"
 #include "Camera/CameraActor.h"
+#include "Engine/SpotLight.h"
+#include "Engine/DirectionalLight.h"
+#include "Components/SpotLightComponent.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "GameFramework/PlayerController.h"
@@ -57,6 +61,8 @@ void ARSGameMode::BeginPlay()
 
 	// В лобби матч не запускаем: ни ботов, ни раундов, ни закупки —
 	// персонаж просто стоит на карте, а поверх открыто меню.
+	UE_LOG(LogTemp, Log, TEXT("RS/лобби: BeginPlay, лобби=%d"), ARSPlayerController::IsLobby() ? 1 : 0);
+
 	if (ARSPlayerController::IsLobby())
 	{
 		GetWorldTimerManager().SetTimer(StartTimer, this, &ARSGameMode::PlaceInLobby, 0.25f, false);
@@ -98,6 +104,22 @@ void ARSGameMode::PlaceInLobby()
 {
 	UWorld* World = GetWorld();
 
+	// При первом запуске пешка появляется позже, чем срабатывает этот таймер,
+	// и ставить на площадку было некого — лобби выглядело «старым», пока
+	// уровень не перезагрузят. Ждём, пока персонаж появится.
+	bool bHavePawn = false;
+	for (TActorIterator<ARSCharacter> It(World); It; ++It)
+	{
+		bHavePawn = true;
+		break;
+	}
+	if (!bHavePawn)
+	{
+		UE_LOG(LogTemp, Log, TEXT("RS/лобби: пешки ещё нет, ждём"));
+		GetWorldTimerManager().SetTimer(StartTimer, this, &ARSGameMode::PlaceInLobby, 0.25f, false);
+		return;
+	}
+
 	// Сцена лобби — отдельная площадка высоко над картой: карта остаётся
 	// фоном далеко внизу, а персонаж стоит один, как на витрине. Ставить
 	// его на боевой спавн было проще, но выглядело как брошенный матч.
@@ -107,15 +129,127 @@ void ARSGameMode::PlaceInLobby()
 	SP.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 	SP.ObjectFlags |= RF_Transient;
 
-	if (AStaticMeshActor* Floor = World->SpawnActor<AStaticMeshActor>(
-		AStaticMeshActor::StaticClass(), Stage - FVector(0.f, 0.f, 100.f), FRotator::ZeroRotator, SP))
+	// Декорации сцены собираются из примитивов движка: своих ассетов под
+	// лобби нет, а куб с конусами дают узнаваемый силуэт без импорта.
+	UStaticMesh* Cube = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"));
+	UStaticMesh* Cone = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cone.Cone"));
+	UStaticMesh* Sphere = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere"));
+
+	// красим тем же способом, что арена: базовый материал примитивов
+	// с параметром Color, поверх него динамический экземпляр
+	UMaterialInterface* BasicMat = LoadObject<UMaterialInterface>(
+		nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+
+	auto SpawnPiece = [&](UStaticMesh* Mesh, const FVector& Loc, const FVector& Scale,
+		const FLinearColor& Color) -> AStaticMeshActor*
 	{
-		Floor->SetMobility(EComponentMobility::Movable);
-		if (UStaticMesh* Cube = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube")))
+		if (!Mesh)
 		{
-			Floor->GetStaticMeshComponent()->SetStaticMesh(Cube);
-			// куб движка — метр на метр: растягиваем в круглую площадку
-			Floor->GetStaticMeshComponent()->SetWorldScale3D(FVector(4.f, 4.f, 0.4f));
+			return nullptr;
+		}
+		AStaticMeshActor* Piece = World->SpawnActor<AStaticMeshActor>(
+			AStaticMeshActor::StaticClass(), Loc, FRotator::ZeroRotator, SP);
+		if (Piece)
+		{
+			Piece->SetMobility(EComponentMobility::Movable);
+			UStaticMeshComponent* Comp = Piece->GetStaticMeshComponent();
+			Comp->SetStaticMesh(Mesh);
+			Comp->SetWorldScale3D(Scale);
+			if (BasicMat)
+			{
+				UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(BasicMat, Piece);
+				MID->SetVectorParameterValue(TEXT("Color"), Color);
+				Comp->SetMaterial(0, MID);
+			}
+		}
+		return Piece;
+	};
+
+	// Пол во весь кадр. Высоту считаем от ног: капсула персонажа — 88 вниз
+	// от центра, плита толщиной 40, поэтому её центр опускаем на 108,
+	// иначе персонаж стоит на воздухе.
+	SpawnPiece(Cube, Stage - FVector(0.f, 0.f, 108.f), FVector(60.f, 60.f, 0.4f),
+		FLinearColor(0.09f, 0.10f, 0.13f));
+
+	// Горы за спиной персонажа: камера смотрит вдоль -X, поэтому ставим их
+	// туда, разного размера и на разной дальности — иначе гряда выглядит
+	// как забор из одинаковых конусов.
+	const float Peaks[][4] = {
+		// X от площадки, Y, ширина, высота
+		{ -5200.f, -3400.f, 26.f, 34.f },
+		{ -6400.f, -1200.f, 34.f, 46.f },
+		{ -5800.f,  1500.f, 22.f, 28.f },
+		{ -7600.f,  3600.f, 40.f, 52.f },
+		{ -4600.f,  5200.f, 18.f, 22.f },
+		{ -8200.f, -5600.f, 30.f, 38.f },
+	};
+	for (const float* P : Peaks)
+	{
+		// дальние вершины светлее: воздушная перспектива отделяет их от ближних
+		const float Far = FMath::GetMappedRangeValueClamped(
+			FVector2D(-8200.f, -4600.f), FVector2D(0.62f, 0.28f), P[0]);
+
+		// Собираем ступенчатой пирамидой из кубов, а не гладким конусом:
+		// вся геометрия арены блочная, и гора из блоков не выпадает из стиля.
+		const int32 Steps = 5;
+		const float LayerH = P[3] * 0.24f;      // высота слоя в единицах масштаба
+		for (int32 L = 0; L < Steps; L++)
+		{
+			const float T = (float)L / (float)Steps;
+			const float Width = P[2] * (1.f - T * 0.78f);
+			// верхние слои светлее — снег на вершине
+			const float Tint = FMath::Min(1.f, Far + T * 0.35f);
+			SpawnPiece(Cube,
+				Stage + FVector(P[0], P[1], -400.f + L * LayerH * 100.f),
+				FVector(Width, Width, LayerH),
+				FLinearColor(Tint * 0.78f, Tint * 0.84f, Tint));
+		}
+	}
+
+	// Солнце: шар со своим эмиссивным материалом — обычный красится светом
+	// сцены и остаётся серым, светиться он не умеет.
+	// Солнце в левой части кадра — прямо по взгляду развёрнутого персонажа
+	if (AStaticMeshActor* Sun = SpawnPiece(Sphere, Stage + FVector(-7000.f, 5000.f, 2600.f),
+		FVector(9.f), FLinearColor::White))
+	{
+		if (UMaterialInterface* SunMat = LoadObject<UMaterialInterface>(
+			nullptr, TEXT("/Game/UI/M_RSSun.M_RSSun")))
+		{
+			UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(SunMat, Sun);
+			MID->SetVectorParameterValue(TEXT("SunColor"), FLinearColor(1.f, 0.86f, 0.55f));
+			MID->SetScalarParameterValue(TEXT("Intensity"), 30.f);
+			Sun->GetStaticMeshComponent()->SetMaterial(0, MID);
+		}
+	}
+	// Свет в лицо — со стороны камеры, а не от декоративного шара за спиной.
+	// Направленный ставить нельзя: он спорит с тем, что уже есть на карте,
+	// и движок пишет об этом ошибку на экран. Прожектор такой проблемы
+	// не создаёт и светит ровно туда, куда нужно.
+	// Прожектор стоит по линии «солнце — персонаж», чуть ближе: свет падает
+	// с той же стороны, где видно светило, и лицо освещено им, а не сзади.
+	// Главный свет сцены — тот, что уже стоит на карте. Пока его не развернуть,
+	// тени падают по-своему, и любой прожектор только подсвечивает сбоку.
+	// В лобби это отдельная загрузка уровня, поэтому матчу разворот не мешает.
+	for (TActorIterator<ADirectionalLight> It(World); It; ++It)
+	{
+		It->SetMobility(EComponentMobility::Movable);
+		// направление «от солнца к персонажу»: солнце стоит слева-впереди
+		It->SetActorRotation(FRotator(-17.f, -36.f, 0.f));
+		It->SetLightColor(FLinearColor(1.f, 0.93f, 0.80f));
+	}
+
+	if (ASpotLight* Key = World->SpawnActor<ASpotLight>(
+		ASpotLight::StaticClass(), Stage + FVector(-1400.f, 1000.f, 620.f),
+		FRotator(-20.f, -35.f, 0.f), SP))
+	{
+		Key->SetMobility(EComponentMobility::Movable);
+		Key->SetBrightness(120000.f);
+		Key->SetLightColor(FLinearColor(1.f, 0.94f, 0.82f));
+		if (USpotLightComponent* Comp = Cast<USpotLightComponent>(Key->GetLightComponent()))
+		{
+			Comp->SetInnerConeAngle(22.f);
+			Comp->SetOuterConeAngle(46.f);
+			Comp->SetAttenuationRadius(4000.f);
 		}
 	}
 
@@ -124,16 +258,20 @@ void ARSGameMode::PlaceInLobby()
 	for (TActorIterator<ARSCharacter> It(GetWorld()); It; ++It)
 	{
 		It->RespawnForRound(Stage);
-		It->SetActorRotation(FRotator::ZeroRotator);
+		// Ставим боком: солнце светит в лицо и при этом остаётся в кадре.
+		// Лицом к камере так не выйдет — всё, что перед персонажем, находится
+		// за камерой, и светило было бы не видно.
+		It->SetActorRotation(FRotator(0.f, 60.f, 0.f));
 		// Движение выключаем, но не через FreezeUntilRound: тот прячет актёра
 		// целиком, и в лобби на площадке никого не было видно.
 		It->GetCharacterMovement()->DisableMovement();
 	}
 
-	// камера смотрит на персонажа спереди и чуть сверху
+	// Камера спереди и чуть сверху, сдвинутая вбок: персонаж уходит в правую
+	// половину кадра, а слева остаётся место под меню.
 	if (ACameraActor* Cam = World->SpawnActor<ACameraActor>(
-		ACameraActor::StaticClass(), Stage + FVector(260.f, 0.f, 95.f),
-		FRotator(-6.f, 180.f, 0.f), SP))
+		ACameraActor::StaticClass(), Stage + FVector(110.f, 38.f, 62.f),
+		FRotator(0.f, 180.f, 0.f), SP))
 	{
 		if (APlayerController* PC = World->GetFirstPlayerController())
 		{
@@ -145,6 +283,16 @@ void ARSGameMode::PlaceInLobby()
 	{
 		State->Phase = ERSPhase::Lobby;
 		State->Announcement = TEXT("Лобби — нажми «Играть» в меню");
+	}
+
+	// диагностика: где площадка, где персонаж и на что смотрит камера
+	for (TActorIterator<ARSCharacter> It(World); It; ++It)
+	{
+		const AActor* View = World->GetFirstPlayerController()
+			? World->GetFirstPlayerController()->GetViewTarget() : nullptr;
+		UE_LOG(LogTemp, Log, TEXT("RS/лобби: пол=%.0f, площадка Z=%.0f, персонаж=%s, скрыт=%d, вид=%s"),
+			ARSArena::GetMapFloor(World), Stage.Z, *It->GetActorLocation().ToCompactString(),
+			It->IsHidden() ? 1 : 0, View ? *View->GetName() : TEXT("нет"));
 	}
 }
 

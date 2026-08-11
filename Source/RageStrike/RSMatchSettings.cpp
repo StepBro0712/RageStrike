@@ -33,6 +33,19 @@ namespace RSMatch
 	int32 GetBuySeconds()             { return GetInt(TEXT("BuySeconds"), 15, 5, 60); }
 	void SetBuySeconds(int32 Value)   { SetInt(TEXT("BuySeconds"), FMath::Clamp(Value, 5, 60)); }
 
+	bool GetPlayerIsCT()
+	{
+		bool bValue = true;
+		GConfig->GetBool(TEXT("RageStrike"), TEXT("PlayerIsCT"), bValue, GGameUserSettingsIni);
+		return bValue;
+	}
+
+	void SetPlayerIsCT(bool bValue)
+	{
+		GConfig->SetBool(TEXT("RageStrike"), TEXT("PlayerIsCT"), bValue, GGameUserSettingsIni);
+		GConfig->Flush(false, GGameUserSettingsIni);
+	}
+
 	bool GetUseBots()
 	{
 		bool bValue = true;

@@ -38,6 +38,10 @@ private:
 	TSharedRef<SWidget> MakeTopBar();
 	TSharedRef<SWidget> MakeTab(const FText& Label, int32 TabIndex);
 	TSharedRef<SWidget> MakePlayPanel();
+	// внутри вкладки «Играть»: выбор режима, тренировка, сеть
+	TSharedRef<SWidget> MakeTrainingPanel();
+	TSharedRef<SWidget> MakeNetworkPanel();
+	int32 PlaySection = 0;
 	TSharedRef<SWidget> MakeSettingsPanel();
 	// подразделы настроек: изображение / управление / прицел
 	TSharedRef<SWidget> MakeSettingsSubTab(const FText& Label, int32 Index);

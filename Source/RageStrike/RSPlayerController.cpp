@@ -68,6 +68,12 @@ void ARSPlayerController::BeginPlay()
 	// яркость держит движок, а не GameUserSettings — ставим её при входе
 	RSOptions::ApplyGamma();
 
+	// сторона из настроек: пешка каждый раз создаётся заново и по умолчанию CT
+	if (ARSCharacter* RSPawn = Cast<ARSCharacter>(GetPawn()))
+	{
+		RSPawn->SetTeam(RSMatch::GetPlayerIsCT() ? ERSTeam::CT : ERSTeam::T);
+	}
+
 	// ник: сохранённый или имя пользователя Windows как заготовка
 	FString Nick;
 	if (!GConfig->GetString(TEXT("RageStrike"), TEXT("Nick"), Nick, GGameUserSettingsIni) || Nick.IsEmpty())
@@ -202,8 +208,10 @@ void ARSPlayerController::OpenMenu(bool bStartup)
 			RSAudio::Get(RSAudio::ESound::MusicMenu), 0.45f * RSOptions::GetMusicVolume(), 1.f, 0.f, nullptr, false, false);
 	}
 
-	// паузу ставим только на стартовом меню: в бою по Esc игра идёт дальше
-	if (bStartup && GetNetMode() == NM_Standalone)
+	// Паузу ставим только на стартовом меню и только вне лобби: на паузе
+	// не тикают таймеры мира, поэтому расстановка лобби никогда не
+	// срабатывала — персонажа на площадку никто не ставил.
+	if (bStartup && !GLobbyMode && GetNetMode() == NM_Standalone)
 	{
 		UGameplayStatics::SetGamePaused(this, true);
 	}
@@ -289,6 +297,11 @@ void ARSPlayerController::AllowStartupMenu()
 
 void ARSPlayerController::SelectTeam(bool bCT)
 {
+	// Запоминаем выбор в настройках: старт матча перезапускает уровень,
+	// и сторона, живущая только на пешке, до матча не доезжала — игрок
+	// выбирал T, а появлялся за CT.
+	RSMatch::SetPlayerIsCT(bCT);
+
 	if (ARSCharacter* RSPawn = Cast<ARSCharacter>(GetPawn()))
 	{
 		RSPawn->SetTeam(bCT ? ERSTeam::CT : ERSTeam::T);
@@ -297,8 +310,7 @@ void ARSPlayerController::SelectTeam(bool bCT)
 
 bool ARSPlayerController::IsTeamCT() const
 {
-	const ARSCharacter* RSPawn = Cast<ARSCharacter>(GetPawn());
-	return !RSPawn || RSPawn->Team == ERSTeam::CT;
+	return RSMatch::GetPlayerIsCT();
 }
 
 void ARSPlayerController::ReloadLevel()

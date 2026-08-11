@@ -287,7 +287,7 @@ TSharedRef<SWidget> SRSMenu::MakeTopBar()
 		];
 }
 
-TSharedRef<SWidget> SRSMenu::MakePlayPanel()
+TSharedRef<SWidget> SRSMenu::MakeTrainingPanel()
 {
 	const bool bStartup = PC.IsValid() && PC->IsStartupMenu();
 
@@ -495,8 +495,18 @@ TSharedRef<SWidget> SRSMenu::MakePlayPanel()
 			.Text(FText::FromString(TEXT("Правила применяются сразу, состав ботов подстраивается")))
 		]
 
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 16.f, 0.f, 0.f)
+		[
+			MakeButton(FText::FromString(TEXT("Назад")), [this]() { PlaySection = 0; })
+		];
+}
+
+TSharedRef<SWidget> SRSMenu::MakeNetworkPanel()
+{
+	return SNew(SVerticalBox)
+
 		// --- сетевая игра ---
-		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 16.f, 0.f, 6.f)
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 6.f)
 		[
 			SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Bold", 14))
 			.ColorAndOpacity(MenuAccent)
@@ -586,7 +596,87 @@ TSharedRef<SWidget> SRSMenu::MakePlayPanel()
 					}
 				})
 			]
+		]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 16.f, 0.f, 0.f)
+		[
+			MakeButton(FText::FromString(TEXT("Назад")), [this]() { PlaySection = 0; })
 		];
+}
+
+TSharedRef<SWidget> SRSMenu::MakePlayPanel()
+{
+	// Вкладка «Играть» — это выбор из двух режимов, а настройки живут внутри
+	// каждого: раньше правила матча и сетевой блок висели одним длинным
+	// списком, и до кнопки старта приходилось прокручивать полменю.
+	return SNew(SWidgetSwitcher)
+		.WidgetIndex_Lambda([this]() { return PlaySection; })
+
+		+ SWidgetSwitcher::Slot()
+		[
+			SNew(SVerticalBox)
+
+			// В матче тренировку не предлагаем: там нужно либо вернуться в бой,
+			// либо уйти в сеть, либо закончить матч и выйти в лобби.
+			+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 10.f)
+			[
+				SNew(SBox)
+				.Visibility(ARSPlayerController::IsLobby() ? EVisibility::Visible : EVisibility::Collapsed)
+				[
+					MakeButton(FText::FromString(TEXT("ТРЕНИРОВКА")), [this]() { PlaySection = 1; })
+				]
+			]
+
+			+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 10.f)
+			[
+				SNew(SBox)
+				.Visibility(ARSPlayerController::IsLobby() ? EVisibility::Collapsed : EVisibility::Visible)
+				[
+					SNew(SVerticalBox)
+
+					+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)
+					[
+						MakeButton(FText::FromString(TEXT("ПРОДОЛЖИТЬ")), [this]()
+						{
+							if (PC.IsValid()) { PC->CloseMenu(); }
+						})
+					]
+
+					+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)
+					[
+						MakeButton(FText::FromString(TEXT("ВЫЙТИ В ЛОББИ")), [this]()
+						{
+							if (PC.IsValid()) { PC->EnterLobby(); }
+						})
+					]
+				]
+			]
+
+			+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f, 0.f, 10.f)
+			[
+				SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Regular", 11))
+				.AutoWrapText(true)
+				.Visibility(ARSPlayerController::IsLobby() ? EVisibility::Visible : EVisibility::Collapsed)
+				.ColorAndOpacity(MenuDim)
+				.Text(FText::FromString(TEXT("Матч против ботов: карта, сторона и правила")))
+			]
+
+			+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 10.f)
+			[
+				MakeButton(FText::FromString(TEXT("СЕТЕВАЯ ИГРА")), [this]() { PlaySection = 2; })
+			]
+
+			+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)
+			[
+				SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Regular", 11))
+				.AutoWrapText(true)
+				.ColorAndOpacity(MenuDim)
+				.Text(FText::FromString(TEXT("Свой сервер или подключение по адресу")))
+			]
+		]
+
+		+ SWidgetSwitcher::Slot()[ MakeTrainingPanel() ]
+		+ SWidgetSwitcher::Slot()[ MakeNetworkPanel() ];
 }
 
 TSharedRef<SWidget> SRSMenu::MakeBindsPanel()
@@ -1218,21 +1308,20 @@ TSharedRef<SWidget> SRSMenu::MakeNewsPanel()
 		[
 			SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Bold", 16))
 			.ColorAndOpacity(MenuAccent)
-			.Text(FText::FromString(TEXT("Обновление v0.5.2")))
+			.Text(FText::FromString(TEXT("Обновление v0.5.3")))
 		]
 		+ SVerticalBox::Slot().AutoHeight()
 		[
 			SNew(STextBlock).Font(FCoreStyle::GetDefaultFontStyle("Regular", 13))
 			.AutoWrapText(true)
 			.Text(FText::FromString(TEXT(
-				"— Лобби: персонаж стоит на карте, матч начинается по кнопке «Играть»\n"
-				"— Из матча можно выйти в лобби, не закрывая игру\n"
-				"— Экран загрузки с логотипом вместо чёрного окна\n"
-				"— Своя заставка при запуске\n"
-				"— Раздел Legit: плавная наводка, время реакции, контроль отдачи\n"
-				"— Оптика снайперки залита ровным кругом, без углов\n"
-				"— Раньше: хитбоксы, chams, конфиги читов, перебинд управления,\n"
-				"   настройка прицела, обзор и яркость")))
+				"— Лобби стало сценой: персонаж на площадке, горы и солнце\n"
+				"— Инвентарь: набор на раунд и автозакупка\n"
+				"— Меню «Играть» разделено на тренировку и сетевую игру\n"
+				"— Выбор стороны больше не сбрасывается при старте матча\n"
+				"— Бессмертие и деньги отключены в сетевой игре\n"
+				"— Раньше: раздел Legit, экран загрузки, заставка,\n"
+				"   хитбоксы, chams, конфиги читов и настройки прицела")))
 		];
 }
 
@@ -1329,8 +1418,9 @@ void SRSMenu::Construct(const FArguments& InArgs)
 			MakeTopBar()
 		]
 
-		// контент активной вкладки
-		+ SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Center)
+		// Контент активной вкладки — слева: справа стоит персонаж, и панель
+		// по центру закрывала его собой.
+		+ SOverlay::Slot().HAlign(HAlign_Left).VAlign(VAlign_Center).Padding(90.f, 0.f, 0.f, 0.f)
 		[
 			SNew(SBox).WidthOverride(540.f)
 			[

@@ -16,6 +16,11 @@ namespace RSMatch
 	int32 GetRoundsToWin();       // сколько раундов нужно для победы, 3..16
 	void SetRoundsToWin(int32 Value);
 
+	// Сторона игрока. Хранится в настройках, а не на пешке: старт матча —
+	// это перезапуск уровня, и выбор на пешке до него не доживал.
+	bool GetPlayerIsCT();
+	void SetPlayerIsCT(bool bValue);
+
 	int32 GetRoundSeconds();      // длительность раунда, 30..300 с
 	void SetRoundSeconds(int32 Value);
 
