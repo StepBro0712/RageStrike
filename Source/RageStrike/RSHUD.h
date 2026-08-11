@@ -42,11 +42,18 @@ private:
 	TArray<FRSBuyHotspot> BuyHotspots;
 	// строки оверлея читов: индекс чита и его область на экране
 	TArray<TPair<int32, FBox2D>> CheatHotspots;
+	// стрелки в настройках читов: ключ = номер настройки * 2, плюс единица
+	// для «больше». У переключателей зона одна, на всю строку.
+	TArray<TPair<int32, FBox2D>> CheatSettingHotspots;
 	bool GetMouseOnCanvas(FVector2D& Out) const;
 
 	void DrawCrosshair(const ARSCharacter* Player);
 	void DrawSniperScope(const ARSCharacter* Player);
 	void DrawESP(const ARSCharacter* Player);
+	// лента событий чита: урон, промахи и причины отказа стрелять
+	void DrawCheatLog(const ARSCharacter* Player);
+	// полоски под прицелом: заряд двойного выстрела, шанс попадания, урон
+	void DrawCheatStatus(const ARSCharacter* Player);
 	void DrawCheatPanel(const ARSCharacter* Player);
 	void DrawHealthArmor(const ARSCharacter* Player);
 	void DrawAmmo(const ARSCharacter* Player);

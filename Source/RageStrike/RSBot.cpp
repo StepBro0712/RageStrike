@@ -27,8 +27,9 @@ ARSBot::ARSBot()
 	bReplicates = true;
 
 	GetCapsuleComponent()->InitCapsuleSize(34.f, 88.f);
-	// пресет Pawn игнорирует канал Visibility — без этого выстрелы пролетают сквозь ботов
-	GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+	// Пули ловит меш, а не капсула: у попадания появляется кость, а с ней
+	// хитбокс. Капсула остаётся только для движения.
+	GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Visibility, ECR_Ignore);
 
 	// те же модели, что у игрока: CT — военный, T — боевик
 	static ConstructorHelpers::FObjectFinder<USkeletalMesh> CTMesh(
@@ -52,6 +53,11 @@ ARSBot::ARSBot()
 	if (UnarmedAnim.Succeeded())
 	{
 		GetMesh()->SetAnimInstanceClass(UnarmedAnim.Class);
+		// пули ловит меш — см. капсулу выше
+		GetMesh()->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+		GetMesh()->SetCollisionObjectType(ECC_Pawn);
+		GetMesh()->SetCollisionResponseToAllChannels(ECR_Ignore);
+		GetMesh()->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
 	}
 
 	static ConstructorHelpers::FObjectFinder<USoundBase> Fire(
@@ -185,6 +191,19 @@ void ARSBot::ApplyWeaponVisuals()
 	const float Fit = (Longest > 1.f) ? RSWeapons::RealLength(Weapon) / Longest : 1.f;
 	GunMesh->SetRelativeScale3D(FVector(Fit));
 
+	// доворот по габаритам — та же таблица, что у игрока: ствол должен
+	// смотреть по оси Y модели
+	FRotator Align = FRotator::ZeroRotator;
+	if (Extent.Z >= Extent.X && Extent.Z >= Extent.Y)
+	{
+		Align = FRotator(0.f, 0.f, -90.f); // модель вытянута вверх
+	}
+	else if (Extent.X > Extent.Y)
+	{
+		Align = FRotator(0.f, 90.f, 0.f);  // вытянута вдоль X
+	}
+	GunAlign = FQuat(Align);
+
 	GunPivot = Gun->GetBounds().Origin * Fit;
 	GunHandLoc = FVector(-8.f, 3.f, -2.f);
 }
@@ -228,7 +247,12 @@ void ARSBot::RespawnForRound(const FVector& Location)
 		FAttachmentTransformRules::SnapToTargetNotIncludingScale);
 	GetMesh()->SetRelativeLocation(FVector(0.f, 0.f, -88.f));
 	GetMesh()->SetRelativeRotation(FRotator(0.f, -90.f, 0.f));
-	GetMesh()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	// живой бот ловит пули мешем: только так у попадания есть кость
+	GetMesh()->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	GetMesh()->SetCollisionObjectType(ECC_Pawn);
+	GetMesh()->SetCollisionResponseToAllChannels(ECR_Ignore);
+	GetMesh()->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
 
 	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	GetCharacterMovement()->SetMovementMode(MOVE_Walking);
@@ -297,10 +321,18 @@ bool ARSBot::IsEnemy(const AActor* Other) const
 	return false;
 }
 
-AActor* ARSBot::FindNearestEnemy() const
+AActor* ARSBot::FindNearestEnemy(AActor** OutNearestAny) const
 {
-	AActor* Best = nullptr;
-	float BestDistSq = FLT_MAX;
+	// Ближайший ВИДИМЫЙ враг, а не просто ближайший: раньше бот брал самого
+	// близкого и, если тот оказывался за стеной, шёл гулять — даже когда
+	// прямо перед ним стоял другой противник.
+	AActor* BestVisible = nullptr;
+	float BestVisibleSq = FLT_MAX;
+	AActor* BestAny = nullptr;
+	float BestAnySq = FLT_MAX;
+
+	const FVector Location = GetActorLocation();
+	const float RangeSq = FMath::Square(3000.f);
 
 	auto Consider = [&](AActor* Candidate)
 	{
@@ -308,11 +340,18 @@ AActor* ARSBot::FindNearestEnemy() const
 		{
 			return;
 		}
-		const float DistSq = FVector::DistSquared(Candidate->GetActorLocation(), GetActorLocation());
-		if (DistSq < BestDistSq)
+		const float DistSq = FVector::DistSquared(Candidate->GetActorLocation(), Location);
+		if (DistSq < BestAnySq)
 		{
-			BestDistSq = DistSq;
-			Best = Candidate;
+			BestAnySq = DistSq;
+			BestAny = Candidate;
+		}
+		// трассировка дорогая: проверяем только тех, кто в зоне боя и ближе
+		// уже найденного видимого
+		if (DistSq < BestVisibleSq && DistSq < RangeSq && CanSee(Candidate))
+		{
+			BestVisibleSq = DistSq;
+			BestVisible = Candidate;
 		}
 	};
 
@@ -324,7 +363,12 @@ AActor* ARSBot::FindNearestEnemy() const
 	{
 		Consider(*It);
 	}
-	return Best;
+
+	if (OutNearestAny)
+	{
+		*OutNearestAny = BestAny;
+	}
+	return BestVisible;
 }
 
 bool ARSBot::CanSee(const AActor* Target) const
@@ -368,11 +412,21 @@ void ARSBot::Tick(float DeltaTime)
 	// Делается у всех, включая клиентские копии — там ИИ не работает.
 	if (GunMesh && GunMesh->GetStaticMesh() && Health > 0.f)
 	{
-		const FQuat DesiredWorld = (GetActorRotation() + FRotator(-5.f, -90.f, 0.f)).Quaternion();
+		const FQuat DesiredWorld =
+			(GetActorRotation() + FRotator(-5.f, -90.f, 0.f)).Quaternion() * GunAlign;
 		const FQuat BoneQuat = GetMesh()->GetSocketQuaternion(TEXT("hand_r"));
 		const FQuat RelQuat = BoneQuat.Inverse() * DesiredWorld;
 		GunMesh->SetRelativeRotation(RelQuat);
-		GunMesh->SetRelativeLocation(GunHandLoc - RelQuat.RotateVector(GunPivot));
+
+		// как у игрока: к руке приводится габаритный центр модели, поэтому
+		// сдвигаем назад по линии ствола, чтобы в кисти была рукоять
+		FVector Rel = GunHandLoc - RelQuat.RotateVector(GunPivot);
+		const float Back = RSWeapons::GripOffsetBack(Weapon);
+		if (Back > 0.f)
+		{
+			Rel -= BoneQuat.UnrotateVector(GetActorForwardVector() * Back);
+		}
+		GunMesh->SetRelativeLocation(Rel);
 	}
 
 	// шаги считаем у всех копий: движение реплицируется, звук локальный
@@ -401,16 +455,21 @@ void ARSBot::Tick(float DeltaTime)
 		return;
 	}
 
-	AActor* Enemy = FindNearestEnemy();
+	AActor* NearestAny = nullptr;
+	AActor* Enemy = FindNearestEnemy(&NearestAny);
 	const FVector Location = GetActorLocation();
+	const float Now = GetWorld()->GetTimeSeconds();
 
 	// --- бой: врага видно ---
-	if (Enemy && CanSee(Enemy))
+	if (Enemy)
 	{
 		const FVector ToEnemy = Enemy->GetActorLocation() - Location;
 		const float Dist = ToEnemy.Size2D();
-		if (Dist < 3000.f)
 		{
+			// запоминаем, где видели: если враг спрячется, бот пойдёт туда,
+			// а не забудет о нём в ту же секунду
+			LastContactPos = Enemy->GetActorLocation();
+			LastContactTime = Now;
 			const FVector Dir2D = FVector(ToEnemy.X, ToEnemy.Y, 0.f).GetSafeNormal();
 			SetActorRotation(FRotator(0.f, ToEnemy.Rotation().Yaw, 0.f));
 			bHasTarget = false;
@@ -449,10 +508,21 @@ void ARSBot::Tick(float DeltaTime)
 		}
 	}
 
-	// --- патруль: идём к маршрутной точке, обходя препятствия ---
-	if (!bHasTarget || FVector::Dist2D(Location, MoveTarget) < 200.f)
+	// --- врага не видно ---
+	// Сначала идём туда, где его видели последний раз или откуда прилетело:
+	// без этого бот, потерявший цель на полсекунды, разворачивался и уходил
+	// гулять по карте, из-за чего выглядел слепым.
+	const bool bHasMemory = (Now - LastContactTime) < MemorySeconds;
+	if (bHasMemory && FVector::Dist2D(Location, LastContactPos) > 250.f)
 	{
-		PickNewTarget(Enemy ? Enemy->GetActorLocation() : Location);
+		MoveTarget = LastContactPos;
+		bHasTarget = true;
+	}
+	else if (!bHasTarget || FVector::Dist2D(Location, MoveTarget) < 200.f)
+	{
+		// цель пропала совсем — обычный патруль, при этом ближайший враг
+		// задаёт направление, чтобы боты не разбредались по углам
+		PickNewTarget(NearestAny ? NearestAny->GetActorLocation() : Location);
 	}
 
 	// застряли — берём другую точку вместо прыжков в стену
@@ -545,7 +615,14 @@ void ARSBot::ShootAt(AActor* Target)
 {
 	UWorld* World = GetWorld();
 	const FVector Eye = GetActorLocation() + FVector(0.f, 0.f, 50.f);
-	FVector Dir = (Target->GetActorLocation() + FVector(0.f, 0.f, 30.f) - Eye).GetSafeNormal();
+	// целимся в то, что видно: у игрока с анти-аимом видимая модель развёрнута,
+	// и грудь оказывается не там, где капсула — часть выстрелов уходит мимо
+	FVector AimAt = Target->GetActorLocation() + FVector(0.f, 0.f, 30.f);
+	if (const ARSCharacter* Player = Cast<ARSCharacter>(Target))
+	{
+		AimAt = Player->GetVisibleAimPoint();
+	}
+	FVector Dir = (AimAt - Eye).GetSafeNormal();
 	Dir = FMath::VRandCone(Dir, FMath::DegreesToRadians(4.f));
 
 	const FVector End = Eye + Dir * 6000.f;
@@ -561,7 +638,19 @@ void ARSBot::ShootAt(AActor* Target)
 	if (bHit && IsEnemy(Hit.GetActor()))
 	{
 		// урон от оружия раунда, ослабленный: боты стреляют часто и без разброса игрока
-		const float Damage = RSWeapons::Get(Weapon).BodyDamage * 0.35f;
+		float Damage = RSWeapons::Get(Weapon).BodyDamage * 0.35f;
+
+		// хитбокс по кости, как у игрока: попадание в ногу теперь слабее,
+		// а в голову — сильнее, вместо одинакового урона в любую точку
+		const ARSCharacter::ERSHitbox Box = Hit.BoneName.IsNone()
+			? ARSCharacter::ERSHitbox::Chest : ARSCharacter::HitboxFromBone(Hit.BoneName);
+		Damage *= (Box == ARSCharacter::ERSHitbox::Head)
+			? RSWeapons::Get(Weapon).HeadMult : ARSCharacter::HitboxMult(Box);
+
+		if (ARSCharacter* Victim = Cast<ARSCharacter>(Hit.GetActor()))
+		{
+			Victim->bLastHitHeadshot = (Box == ARSCharacter::ERSHitbox::Head);
+		}
 		UGameplayStatics::ApplyDamage(Hit.GetActor(), Damage, GetController(), this, nullptr);
 	}
 }
@@ -632,6 +721,13 @@ float ARSBot::TakeDamage(float DamageAmount, FDamageEvent const& DamageEvent,
 		}
 		KillerActor = Fire->Thrower.Get();
 		WeaponName = TEXT("MOLOTOV");
+	}
+
+	// прилетело — значит там враг: идём и смотрим, даже если стреляли в спину
+	if (IsValid(KillerActor) && IsEnemy(KillerActor))
+	{
+		LastContactPos = KillerActor->GetActorLocation();
+		LastContactTime = GetWorld()->GetTimeSeconds();
 	}
 
 	Health -= DamageAmount;

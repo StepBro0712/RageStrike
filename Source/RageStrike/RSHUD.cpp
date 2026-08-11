@@ -13,6 +13,7 @@
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
 #include "Engine/Font.h"
+#include "RSBinds.h"
 #include "EngineUtils.h"
 #include "CanvasItem.h"
 #include "Styling/CoreStyle.h"
@@ -176,7 +177,9 @@ void ARSHUD::DrawHUD()
 	DrawBuyMenu(Player);
 	DrawScoreboard(Player);
 	// оверлей читов рисуем последним: он должен лежать поверх закупки
-	DrawCheatPanel(Player);
+	// меню читов теперь на Slate (SRSCheatMenu) — канвасу рисовать нечего
+	DrawCheatLog(Player);
+	DrawCheatStatus(Player);
 	DrawPerfStats();
 
 	const float Now = GetWorld()->GetTimeSeconds();
@@ -188,7 +191,9 @@ void ARSHUD::DrawHUD()
 		if (GS->Phase == ERSPhase::Intermission)
 		{
 			const float Left = GS->GetTimeLeft();
-			const float Fade = FMath::Clamp(Left / ARSGameMode::BuySeconds, 0.f, 1.f);
+			// длительность закупки задаётся в меню, поэтому берём её из настроек:
+			// на клиенте игрового режима нет, а константы больше не существует
+			const float Fade = FMath::Clamp(Left / FMath::Max(1.f, (float)RSMatch::GetBuySeconds()), 0.f, 1.f);
 			const bool bCT = (Player->Team == ERSTeam::CT);
 
 			// у спецназа заливка ярче и синее, у террористов — тёмная рыжая
@@ -233,13 +238,8 @@ void ARSHUD::DrawHUD()
 		DrawRect(FLinearColor(1.f, 1.f, 1.f, Alpha), 0.f, 0.f, Canvas->SizeX, Canvas->SizeY);
 	}
 
-	// Строка управления: держим её в актуальном виде — клавиши тут те же,
-	// что привязаны в ARSCharacter::SetupPlayerInputComponent
-	if (!Player->bBuyMenuOpen && !Player->bScoreboardOpen)
-	{
-		DrawTextScaled(TEXT("1/2/3/4 — основное · пистолет · нож · гранаты   |   B (удерживать) — закупка   |   G — выбросить   |   R — перезарядка   |   ПКМ — прицел (с гранатой подкат)   |   Shift — тихо   |   Ctrl — присесть   |   F — осмотр   |   V — вид   |   Tab — счёт   |   Del — читы   |   Esc — меню"),
-			FLinearColor(1.f, 1.f, 1.f, 0.32f), 24.f, Canvas->SizeY - 22.f, RSFontMain(), 1.f);
-	}
+	// Строку с подсказками клавиш убрали: она занимала весь низ экрана,
+	// а клавиши теперь и так видно в настройках, где их можно переназначить.
 }
 
 void ARSHUD::DrawCrosshair(const ARSCharacter* Player)
@@ -251,24 +251,42 @@ void ARSHUD::DrawCrosshair(const ARSCharacter* Player)
 
 	const float CX = Canvas->SizeX * 0.5f;
 	const float CY = Canvas->SizeY * 0.5f;
-	const float Gap = FMath::Clamp(4.0f + Player->CurrentSpreadDeg * 8.f, 4.0f, 26.f);
-	const float Len = 8.f;
-	const float Thick = 2.5f;
+	// всё берётся из настроек игрока; динамический зазор растёт от разброса
+	const float Len = RSCrosshair::GetLength();
+	const float Thick = RSCrosshair::GetThickness();
+	const float BaseGap = RSCrosshair::GetGap();
+	const float Gap = RSCrosshair::GetDynamic()
+		? FMath::Clamp(BaseGap + Player->CurrentSpreadDeg * 8.f, BaseGap, BaseGap + 22.f)
+		: BaseGap;
 
-	const FLinearColor Green(0.10f, 0.98f, 0.25f, 1.0f);
+	const FLinearColor Color = RSCrosshair::GetColor();
 	const FLinearColor Outline(0.f, 0.f, 0.f, 0.85f);
 
-	// Тёмный контур прицела для 100% контраста на любом фоне
-	DrawLine(CX - Gap - Len - 1.f, CY, CX - Gap + 1.f, CY, Outline, Thick + 2.f);
-	DrawLine(CX + Gap - 1.f, CY, CX + Gap + Len + 1.f, CY, Outline, Thick + 2.f);
-	DrawLine(CX, CY - Gap - Len - 1.f, CX, CY - Gap + 1.f, Outline, Thick + 2.f);
-	DrawLine(CX, CY + Gap - 1.f, CX, CY + Gap + Len + 1.f, Outline, Thick + 2.f);
+	if (RSCrosshair::GetOutline())
+	{
+		// тёмный контур: прицел читается на любом фоне
+		DrawLine(CX - Gap - Len - 1.f, CY, CX - Gap + 1.f, CY, Outline, Thick + 2.f);
+		DrawLine(CX + Gap - 1.f, CY, CX + Gap + Len + 1.f, CY, Outline, Thick + 2.f);
+		DrawLine(CX, CY - Gap - Len - 1.f, CX, CY - Gap + 1.f, Outline, Thick + 2.f);
+		DrawLine(CX, CY + Gap - 1.f, CX, CY + Gap + Len + 1.f, Outline, Thick + 2.f);
+	}
 
-	// Зеленый прицел CS2
-	DrawLine(CX - Gap - Len, CY, CX - Gap, CY, Green, Thick);
-	DrawLine(CX + Gap, CY, CX + Gap + Len, CY, Green, Thick);
-	DrawLine(CX, CY - Gap - Len, CX, CY - Gap, Green, Thick);
-	DrawLine(CX, CY + Gap, CX, CY + Gap + Len, Green, Thick);
+	if (Len > 0.f)
+	{
+		DrawLine(CX - Gap - Len, CY, CX - Gap, CY, Color, Thick);
+		DrawLine(CX + Gap, CY, CX + Gap + Len, CY, Color, Thick);
+		DrawLine(CX, CY - Gap - Len, CX, CY - Gap, Color, Thick);
+		DrawLine(CX, CY + Gap, CX, CY + Gap + Len, Color, Thick);
+	}
+
+	if (RSCrosshair::GetDot())
+	{
+		if (RSCrosshair::GetOutline())
+		{
+			DrawRect(Outline, CX - Thick * 0.5f - 1.f, CY - Thick * 0.5f - 1.f, Thick + 2.f, Thick + 2.f);
+		}
+		DrawRect(Color, CX - Thick * 0.5f, CY - Thick * 0.5f, Thick, Thick);
+	}
 }
 
 void ARSHUD::DrawSniperScope(const ARSCharacter* Player)
@@ -348,7 +366,60 @@ void ARSHUD::DrawESP(const ARSCharacter* Player)
 
 		const float W = MaxX - MinX;
 		const float H = MaxY - MinY;
-		DrawBoxOutline(MinX, MinY, W, H, FLinearColor(1.f, 0.1f, 0.1f), 1.5f);
+		const FLinearColor EspCol = ARSCharacter::EspPalette(Player->EspColor);
+
+		// Заливка силуэта: рисуется поверх картинки, поэтому светится
+		// сквозь стены. Настоящие chams потребовали бы пост-процесс материал.
+		if (Player->bEspFill)
+		{
+			FLinearColor Fill = EspCol;
+			Fill.A = 0.22f;
+			DrawRect(Fill, MinX, MinY, W, H);
+		}
+
+		if (Player->bEspBox)
+		{
+			DrawBoxOutline(MinX, MinY, W, H, EspCol, 1.5f);
+		}
+
+		// Скелет по костям: теперь, когда у моделей есть физический ассет,
+		// кости можно спросить напрямую и соединить линиями.
+		if (Player->bEspSkeleton)
+		{
+			if (const ACharacter* AsChar = Cast<ACharacter>(Enemy))
+			{
+				if (const USkeletalMeshComponent* Mesh = AsChar->GetMesh())
+				{
+					static const TCHAR* Chain[][2] =
+					{
+						{ TEXT("head"), TEXT("neck_01") },
+						{ TEXT("neck_01"), TEXT("spine_03") },
+						{ TEXT("spine_03"), TEXT("pelvis") },
+						{ TEXT("spine_03"), TEXT("upperarm_l") },
+						{ TEXT("upperarm_l"), TEXT("lowerarm_l") },
+						{ TEXT("lowerarm_l"), TEXT("hand_l") },
+						{ TEXT("spine_03"), TEXT("upperarm_r") },
+						{ TEXT("upperarm_r"), TEXT("lowerarm_r") },
+						{ TEXT("lowerarm_r"), TEXT("hand_r") },
+						{ TEXT("pelvis"), TEXT("thigh_l") },
+						{ TEXT("thigh_l"), TEXT("calf_l") },
+						{ TEXT("calf_l"), TEXT("foot_l") },
+						{ TEXT("pelvis"), TEXT("thigh_r") },
+						{ TEXT("thigh_r"), TEXT("calf_r") },
+						{ TEXT("calf_r"), TEXT("foot_r") },
+					};
+					for (const TCHAR** Bone : Chain)
+					{
+						const FVector A = Project(Mesh->GetSocketLocation(FName(Bone[0])));
+						const FVector B = Project(Mesh->GetSocketLocation(FName(Bone[1])));
+						if (A.Z > 0.f && B.Z > 0.f)
+						{
+							DrawLine(A.X, A.Y, B.X, B.Y, EspCol, 1.2f);
+						}
+					}
+				}
+			}
+		}
 
 		float EnemyHealth = 100.f;
 		if (const ARSBot* AsBot = Cast<ARSBot>(Enemy))
@@ -360,16 +431,122 @@ void ARSHUD::DrawESP(const ARSCharacter* Player)
 			EnemyHealth = AsPlayer->Health;
 		}
 		const float HPFrac = FMath::Clamp(EnemyHealth / 100.f, 0.f, 1.f);
-		DrawRect(FLinearColor(0.f, 0.f, 0.f, 0.6f), MinX - 7.f, MinY, 4.f, H);
-		DrawRect(FLinearColor(0.1f, 1.f, 0.1f), MinX - 7.f, MinY + H * (1.f - HPFrac), 4.f, H * HPFrac);
+		if (Player->bEspHealth)
+		{
+			DrawRect(FLinearColor(0.f, 0.f, 0.f, 0.6f), MinX - 7.f, MinY, 4.f, H);
+			DrawRect(FLinearColor(0.1f, 1.f, 0.1f), MinX - 7.f, MinY + H * (1.f - HPFrac), 4.f, H * HPFrac);
+		}
 
-		DrawLine(Canvas->SizeX * 0.5f, Canvas->SizeY, MinX + W * 0.5f, MaxY, FLinearColor(1.f, 1.f, 1.f, 0.35f), 1.f);
+		if (Player->bEspLine)
+		{
+			DrawLine(Canvas->SizeX * 0.5f, Canvas->SizeY, MinX + W * 0.5f, MaxY, FLinearColor(1.f, 1.f, 1.f, 0.35f), 1.f);
+		}
 
-		if (OwnPawn)
+		if (OwnPawn && Player->bEspDist)
 		{
 			const int32 Meters = FMath::RoundToInt(FVector::Dist(OwnPawn->GetActorLocation(), Origin) / 100.f);
 			DrawTextScaled(FString::Printf(TEXT("%dm"), Meters), FLinearColor::White, MinX, MinY - 16.f, RSFontMain(), 1.1f);
 		}
+
+		// Упреждение: жёлтая метка там, где цель окажется — по ней и префайрим.
+		// Рисуем по тем же правилам, по каким целится аимбот, иначе метка
+		// показывала бы не то, куда полетит пуля.
+		if (Player->bPredict && Player->bEspMark && Enemy->GetVelocity().Size2D() > 100.f)
+		{
+			const FVector Ahead = Player->PredictPoint(Enemy, !Player->IsVisibleTo(Enemy));
+			const FVector Screen = Project(Ahead);
+			if (Screen.Z > 0.f)
+			{
+				const FLinearColor Amber(1.f, 0.75f, 0.1f);
+				DrawBoxOutline(Screen.X - 9.f, Screen.Y - 9.f, 18.f, 18.f, Amber, 1.5f);
+				DrawLine(MinX + W * 0.5f, MinY + H * 0.5f, Screen.X, Screen.Y, Amber, 1.f);
+			}
+		}
+	}
+}
+
+void ARSHUD::DrawCheatStatus(const ARSCharacter* Player)
+{
+	if (!Player->bAlive)
+	{
+		return;
+	}
+
+	// показываем только то, что включено: выключенный чит на экране не следит
+	const bool bShowDT = Player->bDoubleTap;
+	const bool bShowChance = Player->HitChance > 0.f && (Player->bTriggerbot || Player->bAimbot);
+	const bool bShowDmg = Player->bTriggerbot || Player->bAimbot;
+	if (!bShowDT && !bShowChance && !bShowDmg)
+	{
+		return;
+	}
+
+	// у левого края, под лентой событий: по центру полоски лезли на прицел
+	const float W = 190.f;
+	const float X = 32.f;
+	float Y = Canvas->SizeY * 0.5f - 40.f;
+
+	auto Bar = [&](const FString& Label, float Frac, const FString& Value, const FLinearColor& Col)
+	{
+		DrawTextScaled(Label, ColDim, X, Y - 1.f, RSFontMain(), 1.0f);
+		DrawRect(FLinearColor(0.f, 0.f, 0.f, 0.45f), X + 46.f, Y + 2.f, W - 100.f, 8.f);
+		DrawRect(Col, X + 46.f, Y + 2.f, (W - 100.f) * FMath::Clamp(Frac, 0.f, 1.f), 8.f);
+		DrawTextScaled(Value, Col, X + W - 48.f, Y - 1.f, RSFontMain(), 1.0f);
+		Y += 16.f;
+	};
+
+	if (bShowDT)
+	{
+		const float Need = RSWeapons::Get(Player->CurrentWeapon).Interval * 2.f;
+		const float Frac = Player->DoubleTapCharge / FMath::Max(0.01f, Need);
+		const bool bReady = Frac >= 1.f;
+		Bar(TEXT("DT"), Frac, bReady ? TEXT("готов") : FString::Printf(TEXT("%.0f%%"), Frac * 100.f),
+			bReady ? FLinearColor(0.3f, 0.9f, 1.f) : FLinearColor(0.45f, 0.5f, 0.6f));
+	}
+
+	if (bShowChance)
+	{
+		const float Chance = Player->EstimateHitChance();
+		const bool bOk = Chance >= Player->HitChance;
+		Bar(TEXT("HIT"), Chance / 100.f,
+			FString::Printf(TEXT("%.0f/%.0f"), Chance, Player->HitChance),
+			bOk ? ColCSGreen : FLinearColor(0.9f, 0.55f, 0.2f));
+	}
+
+	if (bShowDmg)
+	{
+		const float Dmg = Player->DamageIfFiredNow();
+		const float Threshold = Player->EffectiveMinDamage();
+		const bool bOk = Dmg >= Threshold;
+		Bar(TEXT("DMG"), Dmg / 100.f,
+			FString::Printf(TEXT("%.0f/%.0f"), Dmg, Threshold),
+			bOk ? ColCSGreen : FLinearColor(0.9f, 0.55f, 0.2f));
+	}
+}
+
+void ARSHUD::DrawCheatLog(const ARSCharacter* Player)
+{
+	if (!Player->bCheatLogs || Player->CheatLogLines.Num() == 0)
+	{
+		return;
+	}
+
+	// лента слева под радаром: свежие строки внизу, старые тают
+	const float Now = GetWorld()->GetTimeSeconds();
+	const float Life = 5.f;
+	float Y = 240.f;
+
+	for (const ARSCharacter::FRSCheatLog& Line : Player->CheatLogLines)
+	{
+		const float Age = Now - Line.Time;
+		if (Age > Life)
+		{
+			continue;
+		}
+		FLinearColor Col = Line.Color;
+		Col.A = FMath::Clamp((Life - Age) / 1.5f, 0.f, 1.f);
+		DrawTextScaled(Line.Text, Col, 32.f, Y, RSFontMain(), 1.05f);
+		Y += 17.f;
 	}
 }
 
@@ -605,6 +782,8 @@ void ARSHUD::DrawCheatPanel(const ARSCharacter* Player)
 		{ TEXT("06"), TEXT("Silent Aim"),  TEXT("пули летят в цель"),       Player->bSilentAim },
 		{ TEXT("07"), TEXT("GodMode"),     TEXT("бессмертие"),              Player->bGodMode },
 		{ TEXT("08"), TEXT("Деньги"),      TEXT("кошелёк не пустеет"),      Player->bInfiniteMoney },
+		{ TEXT("09"), TEXT("Anti-Aim"),    TEXT("тело смотрит не туда"),    Player->bAntiAim },
+		{ TEXT("10"), TEXT("Predict"),     TEXT("упреждение и префайр"),    Player->bPredict },
 	};
 
 	UFont* Small = RSFontMain();
@@ -616,9 +795,40 @@ void ARSHUD::DrawCheatPanel(const ARSCharacter* Player)
 		return;
 	}
 
-	const float W = 460.f;
+	// значения настроек: показываем словами, а не числами там, где так понятнее
+	static const TCHAR* ModeNames[] = { TEXT("Спиной"), TEXT("Спин"), TEXT("Дрожь") };
+	auto OnOff = [](bool b) { return b ? TEXT("вкл") : TEXT("выкл"); };
+
+	struct FSetRow { int32 Id; const TCHAR* Name; FString Value; bool bToggle; };
+	const FSetRow Sets[] =
+	{
+		{ 0, TEXT("Анти-аим: режим"),
+			ModeNames[FMath::Clamp(Player->AntiAimMode, 0, 2)], false },
+		{ 1, TEXT("Анти-аим: качание"),
+			FString::Printf(TEXT("%.0f°"), Player->AntiAimSwing), false },
+		{ 2, TEXT("Анти-аим: наклон головы"),
+			FString::Printf(TEXT("%.0f°"), Player->AntiAimPitch), false },
+		{ 3, TEXT("Анти-аим: кручение"),
+			FString::Printf(TEXT("%.0f°/с"), Player->AntiAimSpin), false },
+		{ 4, TEXT("Предикт: тиков"),
+			FString::Printf(TEXT("%d  (%.0f мс)"), Player->PredictTicks,
+				Player->PredictTicks * ARSCharacter::PredictTickSeconds * 1000.f), false },
+		{ 5, TEXT("Предикт: только за стеной"), OnOff(Player->bPredictOnlyHidden), true },
+		{ 11, TEXT("Триггербот: FOV"),
+			Player->TriggerFov <= 0.f ? FString(TEXT("точный луч"))
+				: FString::Printf(TEXT("%.1f°"), Player->TriggerFov), false },
+		{ 6, TEXT("ВХ: рамка"),        OnOff(Player->bEspBox),    true },
+		{ 7, TEXT("ВХ: полоса ХП"),    OnOff(Player->bEspHealth), true },
+		{ 8, TEXT("ВХ: дистанция"),    OnOff(Player->bEspDist),   true },
+		{ 9, TEXT("ВХ: линия к цели"), OnOff(Player->bEspLine),   true },
+		{ 10, TEXT("ВХ: метка упреждения"), OnOff(Player->bEspMark), true },
+	};
+
+	const float W = 560.f;
 	const float RowH = 34.f;
-	const float H = 78.f + RowH * UE_ARRAY_COUNT(Rows) + 34.f;
+	const float SetH = 26.f;
+	const float H = 78.f + RowH * UE_ARRAY_COUNT(Rows)
+		+ 30.f + SetH * UE_ARRAY_COUNT(Sets) + 34.f;
 	const float X = Canvas->SizeX * 0.5f - W * 0.5f;
 	const float Y0 = Canvas->SizeY * 0.5f - H * 0.5f;
 
@@ -672,7 +882,57 @@ void ARSHUD::DrawCheatPanel(const ARSCharacter* Player)
 		Y += RowH;
 	}
 
-	DrawTextScaled(TEXT("ЛКМ по строке — включить или выключить"), ColDim,
+	// --- настройки: значение со стрелками по бокам ---
+	CheatSettingHotspots.Reset();
+	Y += 6.f;
+	DrawTextScaled(TEXT("НАСТРОЙКИ"), ColGold, X + 24.f, Y, Small, 1.2f);
+	Y += 22.f;
+
+	for (const FSetRow& Set : Sets)
+	{
+		const float ArrowW = 22.f;
+		const float PlusX = X + W - 40.f;
+		const float MinusX = PlusX - 132.f;
+
+		if (Set.bToggle)
+		{
+			// переключателю стрелки не нужны: жмём всю строку
+			const FBox2D Zone(FVector2D(X + 14.f, Y - 2.f), FVector2D(X + W - 14.f, Y + SetH - 8.f));
+			CheatSettingHotspots.Add(TPair<int32, FBox2D>(Set.Id * 2 + 1, Zone));
+			if (bHasMouse && Zone.IsInside(Mouse))
+			{
+				DrawRect(FLinearColor(1.f, 1.f, 1.f, 0.06f),
+					Zone.Min.X, Zone.Min.Y, Zone.GetSize().X, Zone.GetSize().Y);
+			}
+			DrawTextScaled(Set.Name, ColWhite, X + 24.f, Y, Small, 1.1f);
+			DrawTextScaled(Set.Value, Set.Value == TEXT("вкл") ? ColCSGreen : ColDim,
+				PlusX - 6.f, Y, Small, 1.1f);
+		}
+		else
+		{
+			const FBox2D MinusZone(FVector2D(MinusX, Y - 2.f), FVector2D(MinusX + ArrowW, Y + SetH - 8.f));
+			const FBox2D PlusZone(FVector2D(PlusX, Y - 2.f), FVector2D(PlusX + ArrowW, Y + SetH - 8.f));
+			CheatSettingHotspots.Add(TPair<int32, FBox2D>(Set.Id * 2, MinusZone));
+			CheatSettingHotspots.Add(TPair<int32, FBox2D>(Set.Id * 2 + 1, PlusZone));
+
+			DrawTextScaled(Set.Name, ColWhite, X + 24.f, Y, Small, 1.1f);
+
+			auto Arrow = [&](const FBox2D& Zone, const TCHAR* Sign)
+			{
+				const bool bHover = bHasMouse && Zone.IsInside(Mouse);
+				DrawRect(bHover ? FLinearColor(0.35f, 0.35f, 0.38f) : FLinearColor(0.18f, 0.18f, 0.20f),
+					Zone.Min.X, Zone.Min.Y, Zone.GetSize().X, Zone.GetSize().Y);
+				DrawTextScaled(Sign, ColWhite, Zone.Min.X + 7.f, Zone.Min.Y + 2.f, Small, 1.15f);
+			};
+			Arrow(MinusZone, TEXT("<"));
+			Arrow(PlusZone, TEXT(">"));
+
+			DrawTextScaled(Set.Value, ColGold, MinusX + ArrowW + 12.f, Y, Small, 1.1f);
+		}
+		Y += SetH;
+	}
+
+	DrawTextScaled(TEXT("ЛКМ по строке — переключить, по стрелкам — изменить"), ColDim,
 		X + 20.f, Y0 + H - 26.f, Small, 1.05f);
 }
 
@@ -681,6 +941,15 @@ bool ARSHUD::HandleCheatClick(const FVector2D& Mouse, ARSCharacter* Player)
 	if (!Player || !Player->bCheatMenuOpen)
 	{
 		return false;
+	}
+	// стрелки настроек проверяем первыми: они лежат ниже строк-переключателей
+	for (const TPair<int32, FBox2D>& Spot : CheatSettingHotspots)
+	{
+		if (Spot.Value.IsInside(Mouse))
+		{
+			Player->ApplyCheatSetting(Spot.Key / 2, (Spot.Key % 2) ? 1 : -1);
+			return true;
+		}
 	}
 	for (const TPair<int32, FBox2D>& Spot : CheatHotspots)
 	{
@@ -712,7 +981,8 @@ void ARSHUD::DrawHealthArmor(const ARSCharacter* Player)
 	const FString MoneyStr = FString::Printf(TEXT("$ %d"), Player->Money);
 	float MW = 0.f, MH = 0.f;
 	GetTextSizeScaled(MoneyStr, MW, MH, Big, 1.8f);
-	const float MoneyX = CX - 340.f;
+	// деньги ушли в левый нижний угол, здоровье — по центру, патроны — вправо
+	const float MoneyX = 44.f;
 	const float MoneyY = H - 65.f;
 
 	DrawRect(ColBgDark, MoneyX - 12.f, MoneyY - 6.f, MW + 24.f, 44.f);
@@ -725,7 +995,7 @@ void ARSHUD::DrawHealthArmor(const ARSCharacter* Player)
 	const FString HPStr = FString::Printf(TEXT("%d"), HP);
 	float HW = 0.f, HH = 0.f;
 	GetTextSizeScaled(HPStr, HW, HH, Big, 2.4f);
-	const float HPX = CX - 130.f;
+	const float HPX = CX - 59.f; // плашка шириной 150 встаёт ровно по центру
 	const float HPY = H - 75.f;
 
 	DrawRect(ColBgDark, HPX - 16.f, HPY - 4.f, 150.f, 54.f);
@@ -748,7 +1018,7 @@ void ARSHUD::DrawHealthArmor(const ARSCharacter* Player)
 	}
 
 	// 3. ПАТРОНЫ И ОРУЖИЕ (Центр-Справа 12 / 24 с фоновой плашкой)
-	const float AmmoX = CX + 90.f;
+	const float AmmoX = Canvas->SizeX - 212.f;
 	const float AmmoY = H - 75.f;
 
 	DrawRect(ColBgDark, AmmoX - 12.f, AmmoY - 4.f, 180.f, 54.f);

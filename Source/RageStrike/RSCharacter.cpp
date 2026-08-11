@@ -12,6 +12,9 @@
 #include "RSAudio.h"
 #include "RSTracer.h"
 #include "RSViewModel.h"
+#include "RSCheatMenu.h"
+#include "Widgets/SWeakWidget.h"
+#include "Engine/GameViewportClient.h"
 #include "Animation/AnimSequence.h"
 #include "Animation/AnimSingleNodeInstance.h"
 #include "Camera/CameraComponent.h"
@@ -57,8 +60,9 @@ ARSCharacter::ARSCharacter()
 	PrimaryActorTick.bCanEverTick = true;
 
 	GetCapsuleComponent()->InitCapsuleSize(34.f, 88.f);
-	// пресет Pawn игнорирует Visibility — боты не могли попасть по игроку
-	GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+	// Пули теперь ловит скелетный меш, а не капсула: только так у попадания
+	// есть кость, а значит хитбокс. Капсула осталась для движения и толкания.
+	GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Visibility, ECR_Ignore);
 
 	SpringArm = CreateDefaultSubobject<USpringArmComponent>(TEXT("SpringArm"));
 	SpringArm->SetupAttachment(GetCapsuleComponent());
@@ -191,6 +195,13 @@ ARSCharacter::ARSCharacter()
 	GetMesh()->SetOwnerNoSee(true);
 	GetMesh()->SetCastHiddenShadow(true);
 
+	// коллизия по костям: физический ассет уже есть (иначе не работал бы
+	// рэгдолл), и его тела дают Hit.BoneName для расчёта хитбокса
+	GetMesh()->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	GetMesh()->SetCollisionObjectType(ECC_Pawn);
+	GetMesh()->SetCollisionResponseToAllChannels(ECR_Ignore);
+	GetMesh()->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+
 	static ConstructorHelpers::FObjectFinder<USoundBase> Fire(
 		TEXT("/Game/Weapons/GrenadeLauncher/Audio/FirstPersonTemplateWeaponFire02.FirstPersonTemplateWeaponFire02"));
 	if (Fire.Succeeded())
@@ -251,6 +262,8 @@ void ARSCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLife
 	DOREPLIFETIME(ARSCharacter, bHasSecondary);
 	DOREPLIFETIME(ARSCharacter, SecondaryType);
 	DOREPLIFETIME(ARSCharacter, Grenades);
+	DOREPLIFETIME(ARSCharacter, AntiAimYaw);
+	DOREPLIFETIME(ARSCharacter, AntiAimPitchRep);
 }
 
 void ARSCharacter::GiveWeapon(ERSWeapon Type)
@@ -666,27 +679,38 @@ void ARSCharacter::ToggleCheatMenu()
 {
 	bCheatMenuOpen = !bCheatMenuOpen;
 
-	// в оверлее читы переключаются мышью, поэтому нужен курсор
-	if (APlayerController* PC = Cast<APlayerController>(GetController()))
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	if (!PC || !PC->IsLocalController() || !GEngine || !GEngine->GameViewport)
 	{
-		if (PC->IsLocalController() && !bBuyMenuOpen)
+		return;
+	}
+
+	if (bCheatMenuOpen)
+	{
+		SAssignNew(CheatMenuWidget, SRSCheatMenu).Owner(this);
+		GEngine->GameViewport->AddViewportWidgetContent(
+			SAssignNew(CheatMenuContainer, SWeakWidget)
+				.PossiblyNullContent(CheatMenuWidget.ToSharedRef()), 90);
+
+		// Только интерфейс: иначе мышь под меню продолжает крутить камеру,
+		// а WASD уходят в персонажа — та же болячка, что была у главного меню.
+		PC->bShowMouseCursor = true;
+		FInputModeUIOnly Mode;
+		Mode.SetWidgetToFocus(CheatMenuWidget);
+		Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+		PC->SetInputMode(Mode);
+	}
+	else
+	{
+		if (CheatMenuContainer.IsValid())
 		{
-			PC->bShowMouseCursor = bCheatMenuOpen;
-			if (bCheatMenuOpen)
-			{
-				FInputModeGameAndUI Mode;
-				Mode.SetLockMouseToViewportBehavior(EMouseLockMode::LockOnCapture);
-				Mode.SetHideCursorDuringCapture(false);
-				PC->SetInputMode(Mode);
-				int32 SizeX = 0, SizeY = 0;
-				PC->GetViewportSize(SizeX, SizeY);
-				PC->SetMouseLocation(SizeX / 2, SizeY / 2);
-			}
-			else
-			{
-				PC->SetInputMode(FInputModeGameOnly());
-			}
+			GEngine->GameViewport->RemoveViewportWidgetContent(CheatMenuContainer.ToSharedRef());
 		}
+		CheatMenuContainer.Reset();
+		CheatMenuWidget.Reset();
+
+		PC->bShowMouseCursor = false;
+		PC->SetInputMode(FInputModeGameOnly());
 	}
 }
 
@@ -703,6 +727,44 @@ void ARSCharacter::ToggleCheatByIndex(int32 Index)
 	case 5: bSilentAim = !bSilentAim; break;
 	case 6: bGodMode = !bGodMode; SyncCheats(); break;
 	case 7: bInfiniteMoney = !bInfiniteMoney; SyncCheats(); break;
+	case 8: bAntiAim = !bAntiAim; SyncCheats(); break;
+	case 9: bPredict = !bPredict; break;
+	default: break;
+	}
+}
+
+void ARSCharacter::ApplyCheatSetting(int32 Id, int32 Delta)
+{
+	switch (Id)
+	{
+	case 0: // режим анти-аима по кругу
+		AntiAimMode = (AntiAimMode + Delta + AntiAimModes) % AntiAimModes;
+		SyncCheats();
+		break;
+	case 1: // качание: 0 — ровно спиной, дальше заметнее
+		AntiAimSwing = FMath::Clamp(AntiAimSwing + Delta * 5.f, 0.f, 90.f);
+		SyncCheats();
+		break;
+	case 2: // наклон: вниз до -89, вверх до +89
+		AntiAimPitch = FMath::Clamp(AntiAimPitch + Delta * 5.f, -89.f, 89.f);
+		SyncCheats();
+		break;
+	case 3: // скорость кручения
+		AntiAimSpin = FMath::Clamp(AntiAimSpin + Delta * 30.f, 30.f, 1440.f);
+		SyncCheats();
+		break;
+	case 4: // глубина упреждения в тиках по 1/64 с
+		PredictTicks = FMath::Clamp(PredictTicks + Delta, 1, 32);
+		break;
+	case 5: bPredictOnlyHidden = !bPredictOnlyHidden; break;
+	case 11: // конус триггербота: 0 — только точный луч
+		TriggerFov = FMath::Clamp(TriggerFov + Delta * 0.5f, 0.f, 20.f);
+		break;
+	case 6: bEspBox = !bEspBox; break;
+	case 7: bEspHealth = !bEspHealth; break;
+	case 8: bEspDist = !bEspDist; break;
+	case 9: bEspLine = !bEspLine; break;
+	case 10: bEspMark = !bEspMark; break;
 	default: break;
 	}
 }
@@ -915,6 +977,7 @@ void ARSCharacter::ApplyWeaponVisuals()
 	}
 
 	UStaticMesh* WeaponMesh = KnifeAsset;
+	TPGunAlign = FQuat::Identity;            // у заглушек оси уже правильные
 	FVector MeshPivot = FVector::ZeroVector; // смещение центра модели от пивота
 	float FitFP = 0.f;                       // масштаб вьюмодели, 0 — как у мира
 	FVector HandLoc(-6.f, 2.f, -2.f);   // в руке тела (вид от третьего лица)
@@ -999,6 +1062,7 @@ void ARSCharacter::ApplyWeaponVisuals()
 			}
 			CamRot = (FQuat(CamRot) * FQuat(Align)).Rotator();
 			HandRot = (FQuat(HandRot) * FQuat(Align)).Rotator();
+			TPGunAlign = FQuat(Align);
 
 			// центр модели редко совпадает с началом координат — компенсируем,
 			// иначе ствол висит в стороне от руки
@@ -1045,7 +1109,8 @@ void ARSCharacter::ApplyWeaponVisuals()
 	GunBaseRot = CamRot;
 	if (IsLocallyControlled() && GetWorld())
 	{
-		DrawStartTime = GetWorld()->GetTimeSeconds();
+		// быстрая смена: анимация доставания пропускается целиком
+		DrawStartTime = GetWorld()->GetTimeSeconds() - (bQuickSwitch ? 10.f : 0.f);
 	}
 
 	// Если у оружия есть скелетная модель с анимациями CS2, показываем её
@@ -1155,15 +1220,86 @@ void ARSCharacter::SyncCheats()
 {
 	if (!HasAuthority())
 	{
-		ServerSyncCheats(bGodMode, bSpeedhack, bInfiniteMoney);
+		ServerSyncCheats(bGodMode, bSpeedhack, bInfiniteMoney, bAntiAim,
+			AntiAimMode, AntiAimSwing, AntiAimPitch, AntiAimSpin);
 	}
 }
 
-void ARSCharacter::ServerSyncCheats_Implementation(bool bInGod, bool bInSpeed, bool bInMoney)
+void ARSCharacter::ServerSyncCheats_Implementation(bool bInGod, bool bInSpeed,
+	bool bInMoney, bool bInAntiAim, int32 InMode, float InSwing, float InPitch, float InSpin)
 {
 	bGodMode = bInGod;
 	bSpeedhack = bInSpeed;
-	bInfiniteMoney = bInMoney;
+	// сетевому клиенту деньги не выдаём, как бы он ни просил
+	bInfiniteMoney = bInMoney && GetNetMode() == NM_Standalone;
+	// разворот тела считает сервер, поэтому настройки анти-аима нужны ему тоже
+	bAntiAim = bInAntiAim;
+	AntiAimMode = InMode;
+	AntiAimSwing = InSwing;
+	AntiAimPitch = InPitch;
+	AntiAimSpin = InSpin;
+}
+
+FVector ARSCharacter::GetVisibleAimPoint() const
+{
+	// Целятся не в капсулу, а в то, что видно, — в грудь модели. Пока
+	// анти-аим выключен, подменённый разворот нулевой и точка совпадает
+	// с прежней, поэтому на обычную игру это не влияет.
+	const FVector Chest = GetActorLocation() + FVector(0.f, 0.f, 30.f);
+	if (!bAntiAim)
+	{
+		return Chest;
+	}
+	const FVector FakeDir = FRotator(0.f, AntiAimYaw, 0.f).Vector();
+	return Chest + FakeDir * 30.f;
+}
+
+bool ARSCharacter::IsVisibleTo(const AActor* Target) const
+{
+	FHitResult Hit;
+	FCollisionQueryParams Params;
+	Params.AddIgnoredActor(this);
+	Params.bTraceComplex = true;
+	const FVector From = Camera->GetComponentLocation();
+	const FVector To = Target->GetActorLocation() + FVector(0.f, 0.f, 55.f);
+	const bool bBlocked = GetWorld()->LineTraceSingleByChannel(Hit, From, To, ECC_Visibility, Params);
+	return !bBlocked || Hit.GetActor() == Target;
+}
+
+FVector ARSCharacter::PredictPoint(const AActor* Target, bool bTargetHidden) const
+{
+	// целимся в выбранный хитбокс, а не всегда в голову
+	const FVector Head = Target->GetActorLocation() + FVector(0.f, 0.f, HitboxHeight(AimHitbox));
+
+	// По умолчанию упреждение — только для тех, кого сейчас не видно: по
+	// видимой цели обычная наводка точнее, а упреждение уводило бы прицел
+	// вперёд и заставляло мазать.
+	if (!bPredict || (bPredictOnlyHidden && !bTargetHidden))
+	{
+		return Head;
+	}
+
+	const FVector Velocity = Target->GetVelocity();
+	if (Velocity.Size2D() < 50.f)
+	{
+		return Head; // стоит на месте — упреждать нечего
+	}
+
+	const float Lead = PredictTicks * PredictTickSeconds;
+	const FVector Ahead = Head + Velocity * Lead;
+
+	// Упреждённую точку обрезаем по стене: без этого прицел уезжал сквозь
+	// угол в соседнюю комнату, куда цель физически не выйдет.
+	FHitResult Hit;
+	FCollisionQueryParams Params;
+	Params.AddIgnoredActor(this);
+	Params.AddIgnoredActor(Target);
+	Params.bTraceComplex = true;
+	if (GetWorld()->LineTraceSingleByChannel(Hit, Head, Ahead, ECC_Visibility, Params))
+	{
+		return Hit.ImpactPoint - Velocity.GetSafeNormal() * 20.f;
+	}
+	return Ahead;
 }
 
 bool ARSCharacter::IsFrozen() const
@@ -1248,20 +1384,9 @@ void ARSCharacter::StopWalk()  { bWalking = false; }
 
 void ARSCharacter::StartFire()
 {
-	// в оверлее читов ЛКМ переключает чит, а не стреляет
+	// меню читов забирает мышь себе: клики обрабатывает Slate, стрелять нельзя
 	if (bCheatMenuOpen)
 	{
-		if (APlayerController* PC = Cast<APlayerController>(GetController()))
-		{
-			float MX = 0.f, MY = 0.f;
-			if (ARSHUD* RSHud = Cast<ARSHUD>(PC->GetHUD()))
-			{
-				if (PC->GetMousePosition(MX, MY))
-				{
-					RSHud->HandleCheatClick(FVector2D(MX, MY), this);
-				}
-			}
-		}
 		return;
 	}
 
@@ -1462,16 +1587,75 @@ void ARSCharacter::Tick(float DeltaTime)
 		const FRotator Offset = (RSWeapons::Get(CurrentWeapon).Mesh == ERSMeshKind::Knife)
 			? FRotator(-50.f, 0.f, 0.f)    // клинок вытянут по оси Z
 			: FRotator(-5.f, -90.f, 0.f);  // стволы вытянуты по оси Y
-		const FQuat DesiredWorld = (GetActorRotation() + Offset).Quaternion();
+		// доворот модели обязателен и здесь: без него пересчёт под кость
+		// сбрасывает подгонку по габаритам, и AWP встаёт стоймя
+		const FQuat DesiredWorld = (GetActorRotation() + Offset).Quaternion() * TPGunAlign;
 		const FQuat BoneQuat = GetMesh()->GetSocketQuaternion(TEXT("hand_r"));
 		const FQuat RelQuat = BoneQuat.Inverse() * DesiredWorld;
 		TPGunMesh->SetRelativeRotation(RelQuat);
-		// у скачанных моделей центр далеко от пивота — сдвигаем по факту поворота,
-		// иначе ствол уезжает от руки
-		if (!TPGunPivot.IsNearlyZero())
+
+		// У скачанных моделей центр далеко от пивота, поэтому к руке приводим
+		// габаритный центр. Но в кисти должна быть рукоять, а не середина
+		// ствола — иначе оружие висит у бедра. Сдвигаем назад по направлению
+		// взгляда: направление модели у всех авторов своё, а мировая ось
+		// одна и та же. Пересчёт в систему кости — потому что положение
+		// компонента задаётся относительно неё.
+		FVector Rel = TPGunBaseLoc - RelQuat.RotateVector(TPGunPivot);
+		const float Back = RSWeapons::GripOffsetBack(CurrentWeapon);
+		if (Back > 0.f)
 		{
-			TPGunMesh->SetRelativeLocation(TPGunBaseLoc - RelQuat.RotateVector(TPGunPivot));
+			Rel -= BoneQuat.UnrotateVector(GetActorForwardVector() * Back);
 		}
+		TPGunMesh->SetRelativeLocation(Rel);
+	}
+
+	// Анти-аим: сервер крутит подменённый разворот, клиенты получают его
+	// репликацией. Прицел и стрельба идут по настоящему направлению взгляда —
+	// расходится только то, что видно противнику.
+	if (HasAuthority())
+	{
+		if (bAntiAim)
+		{
+			const float Time = GetWorld()->GetTimeSeconds();
+			float Offset = 180.f; // «спиной» — база всех режимов
+			switch (AntiAimMode)
+			{
+			case 1: // спин: тело крутится непрерывно с заданной скоростью
+				Offset = FMath::Fmod(Time * AntiAimSpin, 360.f);
+				break;
+			case 2: // дрожь: рывками влево-вправо, без плавности
+				Offset += (FMath::Fmod(Time, 0.2f) < 0.1f ? AntiAimSwing : -AntiAimSwing);
+				break;
+			default: // спиной с мягким качанием
+				Offset += FMath::Sin(Time * 6.f) * AntiAimSwing;
+				break;
+			}
+			AntiAimYaw = FMath::UnwindDegrees(GetActorRotation().Yaw + Offset);
+		}
+		else
+		{
+			AntiAimYaw = 0.f;
+		}
+		AntiAimPitchRep = bAntiAim ? AntiAimPitch : 0.f;
+	}
+	if (GetMesh())
+	{
+		// Базовый разворот меша -90 задан в конструкторе и должен применяться
+		// последним, в модельных осях; подмена — в осях актёра, поверх неё.
+		const float FakeYaw = bAntiAim
+			? FMath::UnwindDegrees(AntiAimYaw - GetActorRotation().Yaw) : 0.f;
+		const FQuat Fake = FRotator(AntiAimPitchRep, FakeYaw, 0.f).Quaternion();
+		const FQuat Base = FRotator(0.f, -90.f, 0.f).Quaternion();
+		GetMesh()->SetRelativeRotation(Fake * Base);
+	}
+
+	// Бесконечные деньги — только в одиночной игре: в сетевой это портит
+	// матч остальным, поэтому чит там просто выключается.
+	if (bInfiniteMoney && GetNetMode() != NM_Standalone)
+	{
+		bInfiniteMoney = false;
+		CheatLog(TEXT("бесконечные деньги недоступны в сетевой игре"),
+			FLinearColor(1.f, 0.5f, 0.3f), TEXT("moneynet"));
 	}
 
 	// кошелёк не пустеет: покупки списывают деньги как обычно, а сервер
@@ -1544,6 +1728,44 @@ void ARSCharacter::Tick(float DeltaTime)
 	}
 	CurrentSpreadDeg = bNoRecoilSpread ? 0.f : Spread;
 
+	// бинд: пока клавиша зажата, действует второй порог урона
+	if (const APlayerController* PC = Cast<APlayerController>(GetController()))
+	{
+		const FKey Key = BindKey();
+		bBindHeld = Key.IsValid() && PC->IsInputKeyDown(Key);
+	}
+
+	RecordEnemyHistory();
+	UpdateChams();
+
+	// Автоперезарядка: запускаем после выстрела, а не внутри него — иначе
+	// перезарядка началась бы до того, как выстрел успел отработать.
+	if (bAutoReloadPending)
+	{
+		bAutoReloadPending = false;
+		Reload();
+	}
+
+	// заряд двойного выстрела копится, пока не стреляешь
+	DoubleTapCharge = bDoubleTap ? (DoubleTapCharge + DeltaTime) : 0.f;
+
+	// Автострейф: в воздухе доворот мыши сам добавляет боковое движение —
+	// то, что в CS делают руками, чтобы разгоняться прыжками.
+	if (bAirStrafe && GetCharacterMovement()->IsFalling())
+	{
+		const float Yaw = GetControlRotation().Yaw;
+		const float Delta = FMath::UnwindDegrees(Yaw - LastAirYaw);
+		if (FMath::Abs(Delta) > 0.02f)
+		{
+			AddMovementInput(GetActorRightVector(), FMath::Sign(Delta));
+		}
+		LastAirYaw = Yaw;
+	}
+	else
+	{
+		LastAirYaw = GetControlRotation().Yaw;
+	}
+
 	if (bAimbot)
 	{
 		RunAimbot();
@@ -1578,7 +1800,7 @@ AActor* ARSCharacter::FindBestTarget(FVector& OutAimPoint) const
 	const FVector Forward = Camera->GetForwardVector();
 
 	AActor* Best = nullptr;
-	float BestAngle = 90.f; // рейдж-FOV: пол-экрана
+	float BestAngle = FMath::Clamp(RageFov, 0.f, 180.f); // конус поиска цели
 
 	auto Consider = [&](AActor* Candidate)
 	{
@@ -1586,24 +1808,28 @@ AActor* ARSCharacter::FindBestTarget(FVector& OutAimPoint) const
 		{
 			return;
 		}
-		const FVector Head = Candidate->GetActorLocation() + FVector(0.f, 0.f, 55.f);
-		const FVector Dir = (Head - CamLoc).GetSafeNormal();
+		// Видимость считаем первой: от неё зависит, упреждать эту цель или
+		// целиться в неё напрямую.
+		const bool bVisible = IsVisibleTo(Candidate);
+		const FVector Aim = PredictPoint(Candidate, !bVisible);
+		const FVector Dir = (Aim - CamLoc).GetSafeNormal();
 		const float Angle = FMath::RadiansToDegrees(FMath::Acos(FVector::DotProduct(Forward, Dir)));
 		if (Angle >= BestAngle)
 		{
 			return;
 		}
 
-		FHitResult Hit;
-		FCollisionQueryParams Params;
-		Params.AddIgnoredActor(this);
-		Params.bTraceComplex = true;
-		const bool bBlocked = World->LineTraceSingleByChannel(Hit, CamLoc, Head, ECC_Visibility, Params);
-		if (!bBlocked || Hit.GetActor() == Candidate)
+		// по скрытой цели наводимся только с включённым упреждением: иначе
+		// аимбот стрелял бы в стены
+		// Наводимся только на тех, между кем и нами нет препятствия:
+		// прицел, уезжающий в стену на скрытую цель, только мешает.
+		// Стрельбой по выбегающим занимается триггербот с упреждением.
+		if (bVisible)
 		{
 			Best = Candidate;
 			BestAngle = Angle;
-			OutAimPoint = Head;
+			// бэктрек: если включён, наводимся туда, где цель была недавно
+			OutAimPoint = BacktrackPoint(Candidate, Aim);
 		}
 	};
 
@@ -1628,6 +1854,432 @@ void ARSCharacter::RunAimbot()
 	}
 }
 
+FKey ARSCharacter::BindKey() const
+{
+	switch (BindKeyIndex)
+	{
+	case 1: return EKeys::LeftAlt;
+	case 2: return EKeys::LeftShift;
+	case 3: return EKeys::C;
+	case 4: return EKeys::X;
+	case 5: return EKeys::ThumbMouseButton;
+	case 6: return EKeys::ThumbMouseButton2;
+	default: return EKeys::Invalid;
+	}
+}
+
+FLinearColor ARSCharacter::EspPalette(int32 Index)
+{
+	switch (Index)
+	{
+	case 1:  return FLinearColor(0.1f, 1.f, 0.3f);
+	case 2:  return FLinearColor(0.2f, 0.6f, 1.f);
+	case 3:  return FLinearColor(1.f, 0.85f, 0.1f);
+	case 4:  return FLinearColor(0.75f, 0.3f, 1.f);
+	case 5:  return FLinearColor(1.f, 1.f, 1.f);
+	default: return FLinearColor(1.f, 0.15f, 0.15f);
+	}
+}
+
+void ARSCharacter::RecordEnemyHistory()
+{
+	if (!bBacktrack)
+	{
+		EnemyHistory.Reset();
+		return;
+	}
+
+	const float Now = GetWorld()->GetTimeSeconds();
+	const float Keep = BacktrackMs * 0.001f;
+
+	auto Remember = [&](AActor* Candidate)
+	{
+		if (!IsValid(Candidate) || !IsEnemyActor(Candidate))
+		{
+			return;
+		}
+		TArray<FRSPastPos>& List = EnemyHistory.FindOrAdd(Candidate);
+		List.Add({ Candidate->GetActorLocation(), Now });
+		// выбрасываем всё, что старше окна бэктрека
+		while (List.Num() > 0 && Now - List[0].Time > Keep)
+		{
+			List.RemoveAt(0);
+		}
+	};
+
+	for (TActorIterator<ARSBot> It(GetWorld()); It; ++It)
+	{
+		Remember(*It);
+	}
+	for (TActorIterator<ARSCharacter> It(GetWorld()); It; ++It)
+	{
+		Remember(*It);
+	}
+
+	// цели уходят из мира — чистим мёртвые ключи, иначе карта растёт вечно
+	for (auto It = EnemyHistory.CreateIterator(); It; ++It)
+	{
+		if (!It.Key().IsValid())
+		{
+			It.RemoveCurrent();
+		}
+	}
+}
+
+FVector ARSCharacter::BacktrackPoint(const AActor* Target, const FVector& Fallback) const
+{
+	if (!bBacktrack)
+	{
+		return Fallback;
+	}
+	const TArray<FRSPastPos>* List = EnemyHistory.Find(Target);
+	if (!List || List->Num() == 0)
+	{
+		return Fallback;
+	}
+
+	// Берём самую старую запись в окне: именно она сильнее всего отличается
+	// от текущей позиции, а значит бьёт «назад» по движению цели.
+	const FVector Offset = Fallback - Target->GetActorLocation();
+	return (*List)[0].Location + Offset;
+}
+
+float ARSCharacter::EstimateHitChance() const
+{
+	// Разброс — конус, поэтому шанс считаем честно: прогоняем пучок лучей
+	// и смотрим, какая доля наносит нужный урон. Дешевле, чем кажется:
+	// проверка идёт только когда чит уже собрался стрелять.
+	const float Spread = CurrentSpreadDeg;
+	if (Spread <= 0.01f)
+	{
+		return (DamageIfFiredNow() >= EffectiveMinDamage()) ? 100.f : 0.f;
+	}
+
+	const FVector Start = Camera->GetComponentLocation();
+	const FVector Forward = Camera->GetForwardVector();
+	const int32 Samples = 12;
+	int32 Good = 0;
+
+	FCollisionQueryParams Params;
+	Params.AddIgnoredActor(this);
+
+	for (int32 i = 0; i < Samples; i++)
+	{
+		const FVector Dir = FMath::VRandCone(Forward, FMath::DegreesToRadians(Spread));
+		FHitResult Hit;
+		if (!GetWorld()->LineTraceSingleByChannel(Hit, Start, Start + Dir * 20000.f,
+			ECC_Visibility, Params))
+		{
+			continue;
+		}
+		bool bHead = false;
+		if (DamageForHit(Hit, CurrentWeapon, Start, bHead) >= EffectiveMinDamage())
+		{
+			Good++;
+		}
+	}
+	return 100.f * Good / Samples;
+}
+
+namespace
+{
+	// Одна таблица полей на сохранение и на загрузку: если завести две,
+	// они рано или поздно разойдутся, и настройка будет молча теряться.
+	struct FBoolField { const TCHAR* Key; bool ARSCharacter::* Field; };
+	struct FFloatField { const TCHAR* Key; float ARSCharacter::* Field; };
+	struct FIntField { const TCHAR* Key; int32 ARSCharacter::* Field; };
+
+	const FBoolField BoolFields[] = {
+		{ TEXT("Aimbot"), &ARSCharacter::bAimbot },
+		{ TEXT("Silent"), &ARSCharacter::bSilentAim },
+		{ TEXT("Trigger"), &ARSCharacter::bTriggerbot },
+		{ TEXT("NoRecoil"), &ARSCharacter::bNoRecoilSpread },
+		{ TEXT("DoubleTap"), &ARSCharacter::bDoubleTap },
+		{ TEXT("Predict"), &ARSCharacter::bPredict },
+		{ TEXT("PredictOnlyHidden"), &ARSCharacter::bPredictOnlyHidden },
+		{ TEXT("Backtrack"), &ARSCharacter::bBacktrack },
+		{ TEXT("AntiAim"), &ARSCharacter::bAntiAim },
+		{ TEXT("Speed"), &ARSCharacter::bSpeedhack },
+		{ TEXT("God"), &ARSCharacter::bGodMode },
+		{ TEXT("Money"), &ARSCharacter::bInfiniteMoney },
+		{ TEXT("Esp"), &ARSCharacter::bESP },
+		{ TEXT("EspBox"), &ARSCharacter::bEspBox },
+		{ TEXT("EspFill"), &ARSCharacter::bEspFill },
+		{ TEXT("EspSkeleton"), &ARSCharacter::bEspSkeleton },
+		{ TEXT("EspHealth"), &ARSCharacter::bEspHealth },
+		{ TEXT("EspDist"), &ARSCharacter::bEspDist },
+		{ TEXT("EspLine"), &ARSCharacter::bEspLine },
+		{ TEXT("EspMark"), &ARSCharacter::bEspMark },
+		{ TEXT("CheatLogs"), &ARSCharacter::bCheatLogs },
+		{ TEXT("CheatLogReasons"), &ARSCharacter::bCheatLogReasons },
+		{ TEXT("QuickSwitch"), &ARSCharacter::bQuickSwitch },
+		{ TEXT("HitSound"), &ARSCharacter::bHitSound },
+		{ TEXT("AirStrafe"), &ARSCharacter::bAirStrafe },
+		{ TEXT("Chams"), &ARSCharacter::bChams },
+	};
+
+	const FFloatField FloatFields[] = {
+		{ TEXT("TriggerFov"), &ARSCharacter::TriggerFov },
+		{ TEXT("RageFov"), &ARSCharacter::RageFov },
+		{ TEXT("MinDamage"), &ARSCharacter::MinDamage },
+		{ TEXT("MinDamageAlt"), &ARSCharacter::MinDamageAlt },
+		{ TEXT("HitChance"), &ARSCharacter::HitChance },
+		{ TEXT("BacktrackMs"), &ARSCharacter::BacktrackMs },
+		{ TEXT("AntiAimSwing"), &ARSCharacter::AntiAimSwing },
+		{ TEXT("AntiAimPitch"), &ARSCharacter::AntiAimPitch },
+		{ TEXT("AntiAimSpin"), &ARSCharacter::AntiAimSpin },
+	};
+
+	const FIntField IntFields[] = {
+		{ TEXT("AntiAimMode"), &ARSCharacter::AntiAimMode },
+		{ TEXT("PredictTicks"), &ARSCharacter::PredictTicks },
+		{ TEXT("AimHitbox"), &ARSCharacter::AimHitbox },
+		{ TEXT("BindKey"), &ARSCharacter::BindKeyIndex },
+		{ TEXT("EspColor"), &ARSCharacter::EspColor },
+	};
+
+	const TCHAR* CheatSection = TEXT("Cheat");
+}
+
+FString ARSCharacter::CheatConfigPath(const FString& Name)
+{
+	// Абсолютный путь: относительный с шестью «../» до записи не доводил,
+	// файл молча не появлялся.
+	return FPaths::ConvertRelativePathToFull(
+		FPaths::ProjectSavedDir() / TEXT("Cheats") / (Name + TEXT(".ini")));
+}
+
+void ARSCharacter::SaveCheatConfig(const FString& Name)
+{
+	if (Name.IsEmpty())
+	{
+		return;
+	}
+	const FString Path = CheatConfigPath(Name);
+
+	// Папки Saved/Cheats может не быть, а запись ini её не создаёт.
+	IFileManager::Get().MakeDirectory(*FPaths::GetPath(Path), true);
+
+	// Пишем файл сами: GConfig на этом пути молча ничего не сохранял,
+	// а тут видно и результат, и ошибку.
+	FString Text = FString::Printf(TEXT("[%s]\n"), CheatSection);
+	for (const FBoolField& F : BoolFields)
+	{
+		Text += FString::Printf(TEXT("%s=%s\n"), F.Key, this->*F.Field ? TEXT("True") : TEXT("False"));
+	}
+	for (const FFloatField& F : FloatFields)
+	{
+		Text += FString::Printf(TEXT("%s=%f\n"), F.Key, this->*F.Field);
+	}
+	for (const FIntField& F : IntFields)
+	{
+		Text += FString::Printf(TEXT("%s=%d\n"), F.Key, this->*F.Field);
+	}
+	FFileHelper::SaveStringToFile(Text, *Path);
+
+	CurrentConfig = Name;
+	const bool bWritten = FPaths::FileExists(Path);
+	CheatLog(bWritten
+		? FString::Printf(TEXT("конфиг сохранён: %s"), *Name)
+		: FString::Printf(TEXT("не удалось записать конфиг: %s"), *Path),
+		bWritten ? FLinearColor(0.4f, 0.8f, 1.f) : FLinearColor(1.f, 0.4f, 0.4f));
+	UE_LOG(LogTemp, Log, TEXT("RS/чит: конфиг %s -> %s (%s)"), *Name, *Path,
+		bWritten ? TEXT("записан") : TEXT("ОШИБКА"));
+}
+
+bool ARSCharacter::LoadCheatConfig(const FString& Name)
+{
+	const FString Path = CheatConfigPath(Name);
+	if (!FPaths::FileExists(Path))
+	{
+		return false;
+	}
+
+	// читаем тем же способом, каким писали: файл разбирается построчно
+	FString Text;
+	if (!FFileHelper::LoadFileToString(Text, *Path))
+	{
+		return false;
+	}
+	TMap<FString, FString> Values;
+	TArray<FString> Lines;
+	Text.ParseIntoArrayLines(Lines);
+	for (const FString& Line : Lines)
+	{
+		FString Key, Value;
+		if (Line.Split(TEXT("="), &Key, &Value))
+		{
+			Values.Add(Key.TrimStartAndEnd(), Value.TrimStartAndEnd());
+		}
+	}
+
+	for (const FBoolField& F : BoolFields)
+	{
+		if (const FString* V = Values.Find(F.Key)) { this->*F.Field = V->ToBool(); }
+	}
+	for (const FFloatField& F : FloatFields)
+	{
+		if (const FString* V = Values.Find(F.Key)) { this->*F.Field = FCString::Atof(**V); }
+	}
+	for (const FIntField& F : IntFields)
+	{
+		if (const FString* V = Values.Find(F.Key)) { this->*F.Field = FCString::Atoi(**V); }
+	}
+
+	CurrentConfig = Name;
+	// сервер должен узнать про годмод, скорость, деньги и анти-аим
+	SyncCheats();
+	CheatLog(FString::Printf(TEXT("конфиг загружен: %s"), *Name), FLinearColor(0.4f, 0.8f, 1.f));
+	return true;
+}
+
+TArray<FString> ARSCharacter::ListCheatConfigs()
+{
+	TArray<FString> Files;
+	const FString Dir = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("Cheats"));
+	IFileManager::Get().FindFiles(Files, *(Dir / TEXT("*.ini")), true, false);
+	for (FString& File : Files)
+	{
+		File = FPaths::GetBaseFilename(File);
+	}
+	return Files;
+}
+
+void ARSCharacter::UpdateChams()
+{
+	if (!IsLocallyControlled() || !Camera)
+	{
+		return;
+	}
+
+	// Помечаем врагов в CustomDepth: материал рисует поверх только их.
+	// Своих не помечаем — сквозь стены нужны именно противники.
+	auto Mark = [this](ACharacter* Who, bool bEnemy)
+	{
+		if (USkeletalMeshComponent* Mesh = Who ? Who->GetMesh() : nullptr)
+		{
+			Mesh->SetRenderCustomDepth(bChams && bEnemy);
+			Mesh->SetCustomDepthStencilValue(1);
+		}
+	};
+	for (TActorIterator<ARSBot> It(GetWorld()); It; ++It)
+	{
+		Mark(*It, IsEnemyActor(*It));
+	}
+	for (TActorIterator<ARSCharacter> It(GetWorld()); It; ++It)
+	{
+		Mark(*It, IsEnemyActor(*It));
+	}
+
+	if (!bChams)
+	{
+		if (ChamsMID)
+		{
+			Camera->PostProcessSettings.WeightedBlendables.Array.Empty();
+			ChamsMID = nullptr;
+		}
+		return;
+	}
+
+	if (!ChamsMID)
+	{
+		if (UMaterialInterface* Base = LoadObject<UMaterialInterface>(
+			nullptr, TEXT("/Game/UI/M_RSChams.M_RSChams")))
+		{
+			ChamsMID = UMaterialInstanceDynamic::Create(Base, this);
+			Camera->PostProcessSettings.WeightedBlendables.Array.Empty();
+			Camera->PostProcessSettings.WeightedBlendables.Array.Add(
+				FWeightedBlendable(1.f, ChamsMID));
+		}
+	}
+	if (ChamsMID)
+	{
+		ChamsMID->SetVectorParameterValue(TEXT("ChamsColor"), EspPalette(EspColor));
+	}
+}
+
+void ARSCharacter::CheatLog(const FString& Text, const FLinearColor& Color, const FString& ThrottleKey)
+{
+	if (!bCheatLogs || !IsLocallyControlled())
+	{
+		return;
+	}
+
+	// строки с ключом — диагностика; без отдельного переключателя их не
+	// показываем, иначе «predict error» идёт сплошным потоком
+	if (!ThrottleKey.IsEmpty() && !bCheatLogReasons)
+	{
+		return;
+	}
+
+	const float Now = GetWorld()->GetTimeSeconds();
+
+	// Причины отказа стрелять повторяются каждый кадр — душим их по ключу,
+	// иначе лог превращается в сплошную стену одинаковых строк.
+	if (!ThrottleKey.IsEmpty())
+	{
+		static TMap<FString, float> LastByKey;
+		float& Last = LastByKey.FindOrAdd(ThrottleKey);
+		if (Now - Last < 0.6f)
+		{
+			return;
+		}
+		Last = Now;
+	}
+
+	CheatLogLines.Add({ Text, Now, Color });
+	while (CheatLogLines.Num() > 10)
+	{
+		CheatLogLines.RemoveAt(0);
+	}
+}
+
+void ARSCharacter::TryFireIfWorthIt()
+{
+	// Порог урона: чит не жмёт курок, пока выстрел не наносит хотя бы
+	// MinDamage. Это и отсекает стрельбу в стену — там урона ноль.
+	const float Damage = DamageIfFiredNow();
+	const float Threshold = EffectiveMinDamage();
+	if (Damage < Threshold)
+	{
+		// Пустой прицел — не событие: под ним почти всегда стена, и писать
+		// об этом каждый кадр бессмысленно. Пишем только реальную причину:
+		// цель есть, но урона не хватает.
+		if (Damage > 0.f)
+		{
+			CheatLog(FString::Printf(TEXT("нет выстрела: урон %.0f < %.0f (min damage)"),
+				Damage, Threshold), FLinearColor(0.9f, 0.6f, 0.2f), TEXT("mindmg"));
+		}
+		return;
+	}
+
+	// Шанс попадания: с разбросом даже точная наводка не гарантирует урон,
+	// поэтому ждём, пока конус не накроет цель достаточно плотно.
+	if (HitChance > 0.f)
+	{
+		const float Chance = EstimateHitChance();
+		if (Chance < HitChance)
+		{
+			CheatLog(FString::Printf(TEXT("нет выстрела: шанс %.0f%% < %.0f%% (hit chance error)"),
+				Chance, HitChance), FLinearColor(0.9f, 0.6f, 0.2f), TEXT("hitchance"));
+			return;
+		}
+	}
+
+	// отдача уводит ствол от точки прицеливания — отдельная причина промаха
+	if (PunchCurrent.SizeSquared() > 4.f)
+	{
+		CheatLog(FString::Printf(TEXT("выстрел с уводом отдачи %.1f° (aim punch)"),
+			PunchCurrent.Size()), FLinearColor(0.75f, 0.75f, 0.8f), TEXT("punch"));
+	}
+
+	// триггербот жмёт «курок» сам: сбрасываем блокировку полуавтомата,
+	// иначе пистолеты и AWP стреляли бы один раз за всё время
+	bShotSincePress = false;
+	TryFire();
+
+}
+
 void ARSCharacter::RunTriggerbot()
 {
 	UWorld* World = GetWorld();
@@ -1641,15 +2293,60 @@ void ARSCharacter::RunTriggerbot()
 	{
 		if (IsEnemyActor(Hit.GetActor()))
 		{
-			// триггербот жмёт «курок» сам: сбрасываем блокировку полуавтомата,
-			// иначе пистолеты и AWP стреляли бы один раз за всё время
-			bShotSincePress = false;
-			TryFire();
+			TryFireIfWorthIt();
+			return;
 		}
+	}
+
+	// Дальше — стрельба по цели рядом с прицелом, а не строго под ним:
+	// в пределах TriggerFov. При нуле остаётся только точный луч выше.
+	if (TriggerFov <= 0.f)
+	{
+		return;
+	}
+
+	const FVector Forward = Camera->GetForwardVector();
+	auto Consider = [&](AActor* Candidate)
+	{
+		if (!IsValid(Candidate) || !IsEnemyActor(Candidate))
+		{
+			return false;
+		}
+
+		const bool bVisible = IsVisibleTo(Candidate);
+		if (bVisible)
+		{
+			// видимая цель: стреляем, если она попала в конус триггербота
+			const FVector Head = Candidate->GetActorLocation() + FVector(0.f, 0.f, 55.f);
+			const FVector Dir = (Head - Start).GetSafeNormal();
+			const float Angle = FMath::RadiansToDegrees(FMath::Acos(FVector::DotProduct(Forward, Dir)));
+			return Angle < TriggerFov;
+		}
+
+		// Префайр: по тому, кого не видно, стреляем только с упреждением —
+		// туда, куда цель выбегает. Попадёт, когда она там окажется;
+		// промахи по стене — цена приёма.
+		if (!bPredict || Candidate->GetVelocity().Size2D() < 100.f)
+		{
+			return false;
+		}
+		const FVector Point = PredictPoint(Candidate, true);
+		const FVector Dir = (Point - Start).GetSafeNormal();
+		const float Angle = FMath::RadiansToDegrees(FMath::Acos(FVector::DotProduct(Forward, Dir)));
+		return Angle < TriggerFov;
+	};
+
+	for (TActorIterator<ARSBot> It(World); It; ++It)
+	{
+		if (Consider(*It)) { TryFireIfWorthIt(); return; }
+	}
+	for (TActorIterator<ARSCharacter> It(World); It; ++It)
+	{
+		if (Consider(*It)) { TryFireIfWorthIt(); return; }
 	}
 }
 
-void ARSCharacter::TryFire()
+void ARSCharacter::TryFire(bool bIgnoreCadence)
 {
 	UWorld* World = GetWorld();
 	const FRSWeaponDef& Def = RSWeapons::Get(CurrentWeapon);
@@ -1658,12 +2355,12 @@ void ARSCharacter::TryFire()
 	{
 		return; // в закупку не стреляем
 	}
-	if (!bAlive || bReloading || Now - LastFireTime < Def.Interval)
+	if (!bAlive || bReloading || (!bIgnoreCadence && Now - LastFireTime < Def.Interval))
 	{
 		return;
 	}
 	// полуавтомат: одно нажатие — один выстрел
-	if (!Def.bAuto && bShotSincePress)
+	if (!Def.bAuto && bShotSincePress && !bIgnoreCadence)
 	{
 		return;
 	}
@@ -1682,6 +2379,11 @@ void ARSCharacter::TryFire()
 			return;
 		}
 		Ammo[(uint8)CurrentWeapon]--;
+
+		// Магазин опустел этим выстрелом — перезаряжаемся сразу, не дожидаясь
+		// R и не заставляя жать в пустоту. Сам выстрел при этом происходит.
+		bAutoReloadPending = (Ammo[(uint8)CurrentWeapon] == 0
+			&& Reserve[(uint8)CurrentWeapon] > 0);
 	}
 
 	LastFireTime = Now;
@@ -1740,6 +2442,81 @@ void ARSCharacter::TryFire()
 		RecoilIndex++;
 		SpreadBloom = FMath::Min(SpreadBloom + 0.12f, 1.2f);
 	}
+
+	// Двойной выстрел. Заряд копится заранее; когда он полон — второй патрон
+	// уходит в тот же момент, вне очереди. Не накопился — стреляем один раз
+	// и обнуляем прогресс, ждать «дозарядки» посреди боя нельзя.
+	if (bDoubleTap && !bIgnoreCadence && Def.Slot != ERSSlot::Grenade
+		&& CurrentWeapon != ERSWeapon::Knife)
+	{
+		const float Need = Def.Interval * 2.f; // заряд стоит ровно два выстрела
+		if (DoubleTapCharge < Need)
+		{
+			CheatLog(FString::Printf(TEXT("одиночный: заряд %.0f%%"),
+				100.f * DoubleTapCharge / Need), FLinearColor(0.75f, 0.75f, 0.8f), TEXT("dtcharge"));
+		}
+		else
+		{
+			// Второй патрон имеет смысл только если кого-то убивает: добивает
+			// того же (первый выстрел не свалил) или снимает второго врага.
+			// Поэтому перед ним наводимся заново — на живую цель.
+			FVector AimPoint;
+			if (AActor* Next = FindBestTarget(AimPoint))
+			{
+				if (GetController())
+				{
+					GetController()->SetControlRotation(
+						(AimPoint - Camera->GetComponentLocation()).Rotation());
+				}
+				if (WouldKillWithOneShot())
+				{
+					CheatLog(FString::Printf(TEXT("двойной выстрел → %s"), *RSCombatantName(Next)),
+						FLinearColor(0.4f, 0.8f, 1.f), TEXT("dtfire"));
+					TryFire(true);
+				}
+				else
+				{
+					CheatLog(TEXT("второй выстрел не добивает — придержал"),
+						FLinearColor(0.75f, 0.75f, 0.8f), TEXT("dthold"));
+				}
+			}
+		}
+		DoubleTapCharge = 0.f;
+	}
+}
+
+bool ARSCharacter::WouldKillWithOneShot() const
+{
+	// Смотрим, кто под прицелом и сколько у него осталось: если урон одного
+	// выстрела перекрывает здоровье, второй патрон только тратит боезапас.
+	const FVector Start = Camera->GetComponentLocation();
+	const FVector End = Start + Camera->GetForwardVector() * 20000.f;
+
+	FHitResult Hit;
+	FCollisionQueryParams Params;
+	Params.AddIgnoredActor(this);
+	if (!GetWorld()->LineTraceSingleByChannel(Hit, Start, End, ECC_Visibility, Params))
+	{
+		return false;
+	}
+
+	bool bHead = false;
+	const float Damage = DamageForHit(Hit, CurrentWeapon, Start, bHead);
+	if (Damage <= 0.f)
+	{
+		return false;
+	}
+
+	float TargetHealth = 0.f;
+	if (const ARSBot* Bot = Cast<ARSBot>(Hit.GetActor()))
+	{
+		TargetHealth = Bot->Health;
+	}
+	else if (const ARSCharacter* Player = Cast<ARSCharacter>(Hit.GetActor()))
+	{
+		TargetHealth = Player->Health;
+	}
+	return TargetHealth > 0.f && Damage >= TargetHealth;
 }
 
 void ARSCharacter::ThrowGrenade()
@@ -1964,40 +2741,24 @@ void ARSCharacter::FireOnePellet(const FVector& Start, const FVector& Dir, ERSWe
 	}
 
 	AActor* Target = Hit.GetActor();
-	float TargetZ = 0.f;
-	bool bValidTarget = false;
+	bool bHeadshot = false;
+	const float Damage = DamageForHit(Hit, Weapon, Start, bHeadshot);
 
-	// по своим не стреляем: ни по ботам своей команды, ни по союзным игрокам
-	if (ARSBot* Bot = Cast<ARSBot>(Target))
+	if (Damage <= 0.f)
 	{
-		TargetZ = Bot->GetActorLocation().Z;
-		bValidTarget = (Bot->Team != Team);
-	}
-	else if (ARSCharacter* Player = Cast<ARSCharacter>(Target))
-	{
-		TargetZ = Player->GetActorLocation().Z;
-		bValidTarget = (Player->Team != Team);
+		// в кого-то попали, но не во врага — для лога это промах
+		CheatLog(TEXT("промах"), FLinearColor(0.7f, 0.7f, 0.75f), TEXT("miss"));
 	}
 
-	if (bValidTarget)
+	if (Damage > 0.f)
 	{
-		const bool bHeadshot = Hit.ImpactPoint.Z > TargetZ + 40.f;
-		float Damage = Def.BodyDamage * (bHeadshot ? Def.HeadMult : 1.f);
-
-		// падение урона с дистанцией: в полную силу до 15 м, минимум 60%
-		if (Def.Mesh != ERSMeshKind::Sniper && Weapon != ERSWeapon::Knife)
-		{
-			const float Dist = FVector::Dist(Start, Hit.ImpactPoint);
-			Damage *= FMath::Clamp(1.f - (Dist - 1500.f) / 4500.f * 0.4f, 0.6f, 1.f);
-		}
+		static const TCHAR* BoxNames[] = { TEXT("голова"), TEXT("грудь"), TEXT("живот"), TEXT("конечность") };
+		const ERSHitbox Box = Hit.BoneName.IsNone() ? ERSHitbox::Chest : HitboxFromBone(Hit.BoneName);
+		CheatLog(FString::Printf(TEXT("урон %.0f → %s (%s)"), Damage,
+			*RSCombatantName(Target), BoxNames[(int32)Box]), FLinearColor(0.3f, 1.f, 0.4f));
 
 		if (ARSCharacter* Victim = Cast<ARSCharacter>(Target))
 		{
-			// шлем спасает голову, пока цела броня
-			if (bHeadshot && Victim->bHasHelmet && Victim->Armor > 0.f)
-			{
-				Damage *= 0.5f;
-			}
 			Victim->bLastHitHeadshot = bHeadshot;
 		}
 		else if (ARSBot* BotVictim = Cast<ARSBot>(Target))
@@ -2008,6 +2769,123 @@ void ARSCharacter::FireOnePellet(const FVector& Start, const FVector& Dir, ERSWe
 		UGameplayStatics::ApplyDamage(Target, Damage, GetController(), this, nullptr);
 		ClientHitMarker();
 	}
+}
+
+ARSCharacter::ERSHitbox ARSCharacter::HitboxFromBone(FName Bone)
+{
+	const FString Name = Bone.ToString().ToLower();
+	if (Name.Contains(TEXT("head")) || Name.Contains(TEXT("neck")))
+	{
+		return ERSHitbox::Head;
+	}
+	if (Name.Contains(TEXT("pelvis")) || Name == TEXT("spine_01") || Name == TEXT("spine_02"))
+	{
+		return ERSHitbox::Stomach;
+	}
+	if (Name.Contains(TEXT("spine")) || Name.Contains(TEXT("clavicle")))
+	{
+		return ERSHitbox::Chest;
+	}
+	if (Name.Contains(TEXT("thigh")) || Name.Contains(TEXT("calf")) || Name.Contains(TEXT("foot"))
+		|| Name.Contains(TEXT("arm")) || Name.Contains(TEXT("hand")))
+	{
+		return ERSHitbox::Limb;
+	}
+	return ERSHitbox::Chest;
+}
+
+float ARSCharacter::HitboxMult(ERSHitbox Box)
+{
+	// как в CS: живот больнее груди, конечности заметно слабее
+	switch (Box)
+	{
+	case ERSHitbox::Stomach: return 1.25f;
+	case ERSHitbox::Limb:    return 0.75f;
+	default:                 return 1.f;
+	}
+}
+
+float ARSCharacter::HitboxHeight(int32 Index)
+{
+	// высота точки прицеливания от центра капсулы
+	switch (Index)
+	{
+	case 1:  return 25.f;  // грудь
+	case 2:  return 5.f;   // живот
+	default: return 55.f;  // голова
+	}
+}
+
+float ARSCharacter::DamageForHit(const FHitResult& Hit, ERSWeapon Weapon,
+	const FVector& Start, bool& bOutHeadshot) const
+{
+	const FRSWeaponDef& Def = RSWeapons::Get(Weapon);
+	AActor* Target = Hit.GetActor();
+	bOutHeadshot = false;
+
+	// по своим не стреляем: ни по ботам своей команды, ни по союзным игрокам
+	float TargetZ = 0.f;
+	bool bValidTarget = false;
+	if (const ARSBot* Bot = Cast<ARSBot>(Target))
+	{
+		TargetZ = Bot->GetActorLocation().Z;
+		bValidTarget = (Bot->Team != Team);
+	}
+	else if (const ARSCharacter* Player = Cast<ARSCharacter>(Target))
+	{
+		TargetZ = Player->GetActorLocation().Z;
+		bValidTarget = (Player != this && Player->Team != Team);
+	}
+	if (!bValidTarget)
+	{
+		return 0.f;
+	}
+
+	// Кость известна — берём хитбокс по ней. Если луч пришёл в капсулу
+	// (кости нет), падаем на прежнюю прикидку по высоте.
+	const ERSHitbox Box = Hit.BoneName.IsNone()
+		? ((Hit.ImpactPoint.Z > TargetZ + 40.f) ? ERSHitbox::Head : ERSHitbox::Chest)
+		: HitboxFromBone(Hit.BoneName);
+
+	bOutHeadshot = (Box == ERSHitbox::Head);
+	float Damage = Def.BodyDamage * (bOutHeadshot ? Def.HeadMult : HitboxMult(Box));
+
+	// падение урона с дистанцией: в полную силу до 15 м, минимум 60%
+	if (Def.Mesh != ERSMeshKind::Sniper && Weapon != ERSWeapon::Knife)
+	{
+		const float Dist = FVector::Dist(Start, Hit.ImpactPoint);
+		Damage *= FMath::Clamp(1.f - (Dist - 1500.f) / 4500.f * 0.4f, 0.6f, 1.f);
+	}
+
+	// шлем спасает голову, пока цела броня
+	if (const ARSCharacter* Victim = Cast<ARSCharacter>(Target))
+	{
+		if (bOutHeadshot && Victim->bHasHelmet && Victim->Armor > 0.f)
+		{
+			Damage *= 0.5f;
+		}
+	}
+	return Damage;
+}
+
+float ARSCharacter::DamageIfFiredNow() const
+{
+	// Проверка перед выстрелом: чит не должен жать курок в стену. Считаем
+	// по центральному лучу — тому же, по которому полетит пуля.
+	const FVector Start = Camera->GetComponentLocation();
+	const FVector End = Start + Camera->GetForwardVector() * 20000.f;
+
+	FHitResult Hit;
+	FCollisionQueryParams Params;
+	Params.AddIgnoredActor(this);
+	Params.bReturnPhysicalMaterial = false;
+	if (!GetWorld()->LineTraceSingleByChannel(Hit, Start, End, ECC_Visibility, Params))
+	{
+		return 0.f;
+	}
+
+	bool bHead = false;
+	return DamageForHit(Hit, CurrentWeapon, Start, bHead);
 }
 
 void ARSCharacter::MulticastTracer_Implementation(FVector Start, FVector End, bool bMelee)
@@ -2031,6 +2909,13 @@ void ARSCharacter::MulticastTracer_Implementation(FVector Start, FVector End, bo
 void ARSCharacter::ClientHitMarker_Implementation()
 {
 	LastHitMarkerTime = GetWorld()->GetTimeSeconds();
+
+	// звук попадания: слышно только стрелявшему, поэтому играем локально
+	if (bHitSound)
+	{
+		RSAudio::PlayAt(this, RSAudio::Get(RSAudio::ESound::HitMarker),
+			GetActorLocation(), 0.9f, RSAudio::ERange::Step, false);
+	}
 }
 
 void ARSCharacter::ClientDamaged_Implementation()
@@ -2054,6 +2939,9 @@ float ARSCharacter::TakeDamage(float DamageAmount, FDamageEvent const& DamageEve
 	{
 		return 0.f;
 	}
+
+	CheatLog(FString::Printf(TEXT("получено %.0f ← %s"), DamageAmount,
+		*RSCombatantName(DamageCauser)), FLinearColor(1.f, 0.4f, 0.4f));
 
 	// гранаты и огонь бьют через своего «виновника»: дружественного урона нет,
 	// но своей же гранатой подорваться можно

@@ -25,6 +25,13 @@ namespace RSMatch
 	int32 GetRoundsToWin()           { return GetInt(TEXT("RoundsToWin"), 13, 3, 16); }
 	void SetRoundsToWin(int32 Value) { SetInt(TEXT("RoundsToWin"), FMath::Clamp(Value, 3, 16)); }
 
+	// время шагами по 15 с: мельче крутить в меню бессмысленно
+	int32 GetRoundSeconds()           { return GetInt(TEXT("RoundSeconds"), 120, 30, 300); }
+	void SetRoundSeconds(int32 Value) { SetInt(TEXT("RoundSeconds"), FMath::Clamp(Value, 30, 300)); }
+
+	int32 GetBuySeconds()             { return GetInt(TEXT("BuySeconds"), 15, 5, 60); }
+	void SetBuySeconds(int32 Value)   { SetInt(TEXT("BuySeconds"), FMath::Clamp(Value, 5, 60)); }
+
 	bool GetUseBots()
 	{
 		bool bValue = true;

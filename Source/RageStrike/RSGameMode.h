@@ -34,9 +34,10 @@ public:
 	int32 RoundsToWin = 13;
 	int32 HalfTimeRound = 12;
 
-	static constexpr float RoundSeconds = 120.f;
+	// время раунда и закупки задаёт хост в меню; значения ниже — запасные
+	float RoundSeconds = 120.f;
+	float BuySeconds = 15.f;
 	static constexpr float RoundEndSeconds = 5.f;  // показ итога раунда
-	static constexpr float BuySeconds = 15.f;      // закупка перед раундом
 	static constexpr float ExtraBuySeconds = 15.f; // докупка после начала раунда
 	static constexpr float MatchOverSeconds = 8.f; // показ итога матча
 

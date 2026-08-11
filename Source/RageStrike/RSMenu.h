@@ -39,6 +39,15 @@ private:
 	TSharedRef<SWidget> MakeTab(const FText& Label, int32 TabIndex);
 	TSharedRef<SWidget> MakePlayPanel();
 	TSharedRef<SWidget> MakeSettingsPanel();
+	// подразделы настроек: изображение / управление / прицел
+	TSharedRef<SWidget> MakeSettingsSubTab(const FText& Label, int32 Index);
+	TSharedRef<SWidget> MakeVideoPanel();
+	TSharedRef<SWidget> MakeBindsPanel();
+	TSharedRef<SWidget> MakeCrosshairPanel();
+	TSharedRef<SWidget> MakeCrosshairPreview();
+	TSharedRef<SWidget> MakeChannelRow(int32 Which);
+	int32 SettingsSection = 0;
+	int32 CapturingBind = INDEX_NONE; // какая строка сейчас ловит клавишу
 	TSharedRef<SWidget> MakeArsenalPanel();
 	TSharedRef<SWidget> MakeNewsPanel();
 	TSharedRef<SWidget> MakePlaceholderPanel();

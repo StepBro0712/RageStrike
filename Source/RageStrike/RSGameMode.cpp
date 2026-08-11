@@ -64,6 +64,8 @@ void ARSGameMode::ApplyMatchSettings()
 	HalfTimeRound = RSMatch::HalfTimeFor(RoundsToWin);
 
 	const int32 TeamSize = RSMatch::GetTeamSize();
+	RoundSeconds = RSMatch::GetRoundSeconds();
+	BuySeconds = RSMatch::GetBuySeconds();
 
 	UE_LOG(LogTemp, Log, TEXT("RS/состав: ApplyMatchSettings: TeamSize=%d, боты=%d, RoundsToWin=%d, состав: %s"),
 		TeamSize, RSMatch::GetUseBots() ? 1 : 0, RoundsToWin, *RosterDump());

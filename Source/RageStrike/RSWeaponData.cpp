@@ -100,6 +100,24 @@ namespace RSWeapons
 		return nullptr;
 	}
 
+	float GripOffsetBack(ERSWeapon W)
+	{
+		// Насколько сдвинуть модель назад по линии ствола, чтобы в кисти
+		// оказалась рукоять, а не середина габаритов. Считаем от реальной
+		// длины: у рукояти автомата примерно 30% длины от приклада, то есть
+		// от центра назад ещё пятая часть; у пистолета рукоять почти по центру,
+		// у ножа держат у самого торца.
+		float Factor = 0.f;
+		switch (Get(W).Slot)
+		{
+		case ERSSlot::Secondary: Factor = 0.15f; break;
+		case ERSSlot::Knife:     Factor = 0.35f; break;
+		case ERSSlot::Grenade:   Factor = 0.f;   break;
+		default:                 Factor = 0.20f; break;
+		}
+		return RealLength(W) * Factor;
+	}
+
 	float RealLength(ERSWeapon W)
 	{
 		// настоящая длина каждого ствола в сантиметрах: одна цифра на весь

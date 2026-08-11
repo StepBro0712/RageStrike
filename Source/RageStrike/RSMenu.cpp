@@ -3,6 +3,7 @@
 #include "RSMaps.h"
 #include "RSWeaponData.h"
 #include "RSNet.h"
+#include "RSBinds.h"
 #include "RSMatchSettings.h"
 #include "RSAudio.h"
 #include "HAL/PlatformApplicationMisc.h"
@@ -418,6 +419,29 @@ TSharedRef<SWidget> SRSMenu::MakePlayPanel()
 				[this]() { RSMatch::SetRoundsToWin(RSMatch::GetRoundsToWin() + 1); PushRules(); })
 		]
 
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 6.f)
+		[
+			MakeCycleRow(FText::FromString(TEXT("Время раунда")),
+				TAttribute<FText>::Create([]()
+				{
+					const int32 S = RSMatch::GetRoundSeconds();
+					return FText::FromString(FString::Printf(TEXT("%d:%02d"), S / 60, S % 60));
+				}),
+				[this]() { RSMatch::SetRoundSeconds(RSMatch::GetRoundSeconds() - 15); PushRules(); },
+				[this]() { RSMatch::SetRoundSeconds(RSMatch::GetRoundSeconds() + 15); PushRules(); })
+		]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 6.f)
+		[
+			MakeCycleRow(FText::FromString(TEXT("Время закупки")),
+				TAttribute<FText>::Create([]()
+				{
+					return FText::FromString(FString::Printf(TEXT("%d с"), RSMatch::GetBuySeconds()));
+				}),
+				[this]() { RSMatch::SetBuySeconds(RSMatch::GetBuySeconds() - 5); PushRules(); },
+				[this]() { RSMatch::SetBuySeconds(RSMatch::GetBuySeconds() + 5); PushRules(); })
+		]
+
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
 		[
 			MakeCycleRow(FText::FromString(TEXT("Добирать ботами")),
@@ -530,7 +554,312 @@ TSharedRef<SWidget> SRSMenu::MakePlayPanel()
 		];
 }
 
+TSharedRef<SWidget> SRSMenu::MakeBindsPanel()
+{
+	TSharedRef<SVerticalBox> List = SNew(SVerticalBox);
+
+	const TArray<RSBinds::FEntry>& Entries = RSBinds::All();
+	for (int32 i = 0; i < Entries.Num(); i++)
+	{
+		const RSBinds::FEntry& Entry = Entries[i];
+		List->AddSlot()
+		.AutoHeight()
+		.Padding(0.f, 3.f)
+		[
+			SNew(SHorizontalBox)
+
+			+ SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)
+			[
+				SNew(STextBlock)
+				.Font(FCoreStyle::GetDefaultFontStyle("Regular", 13))
+				.ColorAndOpacity(FLinearColor(0.85f, 0.87f, 0.9f))
+				.Text(FText::FromString(Entry.Display))
+			]
+
+			+ SHorizontalBox::Slot().AutoWidth()
+			[
+				SNew(SBox).WidthOverride(190.f)
+				[
+					SNew(SButton)
+					.ButtonStyle(&FCoreStyle::Get().GetWidgetStyle<FButtonStyle>("NoBorder"))
+					.ContentPadding(FMargin(10.f, 7.f))
+					.OnClicked_Lambda([this, i]()
+						{
+							// строка переходит в режим ожидания: следующая
+							// нажатая клавиша и станет привязкой
+							CapturingBind = i;
+							return FReply::Handled();
+						})
+					[
+						SNew(SBorder)
+						.BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush"))
+						.BorderBackgroundColor_Lambda([this, i]()
+							{
+								return CapturingBind == i ? FLinearColor(0.9f, 0.7f, 0.15f)
+														  : FLinearColor(0.16f, 0.17f, 0.2f);
+							})
+						.Padding(FMargin(10.f, 6.f))
+						[
+							SNew(STextBlock)
+							.Justification(ETextJustify::Center)
+							.Font(FCoreStyle::GetDefaultFontStyle("Bold", 12))
+							.ColorAndOpacity(FLinearColor::White)
+							.Text_Lambda([this, i, &Entry]()
+								{
+									if (CapturingBind == i)
+									{
+										return FText::FromString(TEXT("нажмите клавишу…"));
+									}
+									return RSBinds::GetKey(Entry).GetDisplayName();
+								})
+						]
+					]
+				]
+			]
+		];
+	}
+
+	List->AddSlot()
+	.AutoHeight()
+	.Padding(0.f, 14.f, 0.f, 0.f)
+	[
+		MakeButton(FText::FromString(TEXT("ВЕРНУТЬ ПО УМОЛЧАНИЮ")),
+			[]() { RSBinds::ResetAll(); })
+	];
+
+	List->AddSlot()
+	.AutoHeight()
+	.Padding(0.f, 10.f, 0.f, 0.f)
+	[
+		SNew(STextBlock)
+		.Font(FCoreStyle::GetDefaultFontStyle("Regular", 10))
+		.ColorAndOpacity(FLinearColor(0.55f, 0.57f, 0.62f))
+		.Text(FText::FromString(TEXT("Клавиши сохраняются сразу и переживают перезапуск.")))
+	];
+
+	return List;
+}
+
+TSharedRef<SWidget> SRSMenu::MakeCrosshairPreview()
+{
+	// Прицел собирается из четырёх полосок: вертикальные в столбце,
+	// горизонтальные в строке, между ними зазор — то же, что рисует HUD.
+	auto Bar = [this](bool bVertical)
+	{
+		return SNew(SBox)
+			.WidthOverride_Lambda([bVertical]()
+				{ return bVertical ? RSCrosshair::GetThickness() : RSCrosshair::GetLength(); })
+			.HeightOverride_Lambda([bVertical]()
+				{ return bVertical ? RSCrosshair::GetLength() : RSCrosshair::GetThickness(); })
+			[
+				SNew(SBorder)
+				.BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush"))
+				.BorderBackgroundColor_Lambda([]() { return FSlateColor(RSCrosshair::GetColor()); })
+			];
+	};
+	auto Spacer = [](bool bVertical)
+	{
+		return SNew(SBox)
+			.WidthOverride_Lambda([bVertical]() { return bVertical ? 1.f : RSCrosshair::GetGap() * 2.f; })
+			.HeightOverride_Lambda([bVertical]() { return bVertical ? RSCrosshair::GetGap() * 2.f : 1.f; });
+	};
+
+	return SNew(SBorder)
+		.BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush"))
+		.BorderBackgroundColor(FLinearColor(0.06f, 0.07f, 0.09f, 0.9f))
+		.Padding(10.f)
+		[
+			SNew(SBox)
+			.HeightOverride(120.f)
+			[
+				SNew(SOverlay)
+
+				+ SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Center)
+				[
+					SNew(SVerticalBox)
+					+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center)[ Bar(true) ]
+					+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center)[ Spacer(true) ]
+					+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Center)[ Bar(true) ]
+				]
+
+				+ SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Center)
+				[
+					SNew(SHorizontalBox)
+					+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[ Bar(false) ]
+					+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[ Spacer(false) ]
+					+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)[ Bar(false) ]
+				]
+
+				// точка в центре — если включена
+				+ SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Center)
+				[
+					SNew(SBox)
+					.Visibility_Lambda([]()
+						{ return RSCrosshair::GetDot() ? EVisibility::Visible : EVisibility::Hidden; })
+					.WidthOverride_Lambda([]() { return RSCrosshair::GetThickness(); })
+					.HeightOverride_Lambda([]() { return RSCrosshair::GetThickness(); })
+					[
+						SNew(SBorder)
+						.BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush"))
+						.BorderBackgroundColor_Lambda([]() { return FSlateColor(RSCrosshair::GetColor()); })
+					]
+				]
+			]
+		];
+}
+
+TSharedRef<SWidget> SRSMenu::MakeChannelRow(int32 Which)
+{
+	return SNew(SHorizontalBox)
+
+		+ SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)
+		[
+			SNew(STextBlock)
+			.Font(FCoreStyle::GetDefaultFontStyle("Regular", 13))
+			.Text(FText::FromString(RSCrosshair::ChannelName(Which)))
+		]
+
+		+ SHorizontalBox::Slot().FillWidth(1.4f).VAlign(VAlign_Center).Padding(8.f, 0.f)
+		[
+			SNew(SSlider)
+			.Value_Lambda([Which]() { return RSCrosshair::GetChannel(Which) / 255.f; })
+			.OnValueChanged_Lambda([Which](float V)
+				{ RSCrosshair::SetChannel(Which, FMath::RoundToInt(V * 255.f)); })
+		]
+
+		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+		[
+			SNew(SBox).MinDesiredWidth(46.f).HAlign(HAlign_Right)
+			[
+				SNew(STextBlock)
+				.Font(FCoreStyle::GetDefaultFontStyle("Bold", 13))
+				.Text_Lambda([Which]()
+					{ return FText::AsNumber(RSCrosshair::GetChannel(Which)); })
+			]
+		];
+}
+
+TSharedRef<SWidget> SRSMenu::MakeCrosshairPanel()
+{
+	return SNew(SVerticalBox)
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 10.f)
+		[
+			MakeCrosshairPreview()
+		]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)
+		[
+			MakeCycleRow(FText::FromString(TEXT("Длина")),
+				TAttribute<FText>::Create([]() {
+					return FText::FromString(FString::Printf(TEXT("%.0f"), RSCrosshair::GetLength())); }),
+				[]() { RSCrosshair::SetLength(RSCrosshair::GetLength() - 1.f); },
+				[]() { RSCrosshair::SetLength(RSCrosshair::GetLength() + 1.f); })
+		]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)
+		[
+			MakeCycleRow(FText::FromString(TEXT("Толщина")),
+				TAttribute<FText>::Create([]() {
+					return FText::FromString(FString::Printf(TEXT("%.0f"), RSCrosshair::GetThickness())); }),
+				[]() { RSCrosshair::SetThickness(RSCrosshair::GetThickness() - 1.f); },
+				[]() { RSCrosshair::SetThickness(RSCrosshair::GetThickness() + 1.f); })
+		]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)
+		[
+			MakeCycleRow(FText::FromString(TEXT("Зазор")),
+				TAttribute<FText>::Create([]() {
+					return FText::FromString(FString::Printf(TEXT("%.0f"), RSCrosshair::GetGap())); }),
+				[]() { RSCrosshair::SetGap(RSCrosshair::GetGap() - 1.f); },
+				[]() { RSCrosshair::SetGap(RSCrosshair::GetGap() + 1.f); })
+		]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)[ MakeChannelRow(0) ]
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)[ MakeChannelRow(1) ]
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)[ MakeChannelRow(2) ]
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)[ MakeChannelRow(3) ]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)
+		[
+			MakeCycleRow(FText::FromString(TEXT("Обводка")),
+				TAttribute<FText>::Create([]() {
+					return FText::FromString(RSCrosshair::GetOutline() ? TEXT("вкл") : TEXT("выкл")); }),
+				[]() { RSCrosshair::SetOutline(!RSCrosshair::GetOutline()); },
+				[]() { RSCrosshair::SetOutline(!RSCrosshair::GetOutline()); })
+		]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)
+		[
+			MakeCycleRow(FText::FromString(TEXT("Точка в центре")),
+				TAttribute<FText>::Create([]() {
+					return FText::FromString(RSCrosshair::GetDot() ? TEXT("вкл") : TEXT("выкл")); }),
+				[]() { RSCrosshair::SetDot(!RSCrosshair::GetDot()); },
+				[]() { RSCrosshair::SetDot(!RSCrosshair::GetDot()); })
+		]
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f)
+		[
+			MakeCycleRow(FText::FromString(TEXT("Расходится при стрельбе")),
+				TAttribute<FText>::Create([]() {
+					return FText::FromString(RSCrosshair::GetDynamic() ? TEXT("вкл") : TEXT("выкл")); }),
+				[]() { RSCrosshair::SetDynamic(!RSCrosshair::GetDynamic()); },
+				[]() { RSCrosshair::SetDynamic(!RSCrosshair::GetDynamic()); })
+		];
+}
+
+TSharedRef<SWidget> SRSMenu::MakeSettingsSubTab(const FText& Label, int32 Index)
+{
+	return SNew(SButton)
+		.ButtonStyle(&FCoreStyle::Get().GetWidgetStyle<FButtonStyle>("NoBorder"))
+		.ContentPadding(FMargin(14.f, 6.f))
+		.OnClicked_Lambda([this, Index]() { SettingsSection = Index; return FReply::Handled(); })
+		[
+			SNew(SBorder)
+			.BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush"))
+			.BorderBackgroundColor_Lambda([this, Index]()
+				{
+					return SettingsSection == Index ? FLinearColor(0.25f, 0.45f, 0.75f, 0.55f)
+													: FLinearColor(0.f, 0.f, 0.f, 0.f);
+				})
+			.Padding(FMargin(12.f, 5.f))
+			[
+				SNew(STextBlock)
+				.Font(FCoreStyle::GetDefaultFontStyle("Bold", 12))
+				.ColorAndOpacity_Lambda([this, Index]()
+					{
+						return SettingsSection == Index ? FSlateColor(FLinearColor::White) : FSlateColor(MenuDim);
+					})
+				.Text(Label)
+			]
+		];
+}
+
 TSharedRef<SWidget> SRSMenu::MakeSettingsPanel()
+{
+	// Внутренние вкладки, как в CS2: изображение, управление, прицел —
+	// отдельными разделами верхнего уровня они только загромождали меню.
+	return SNew(SVerticalBox)
+
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 10.f)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().AutoWidth()[ MakeSettingsSubTab(FText::FromString(TEXT("ИЗОБРАЖЕНИЕ")), 0) ]
+			+ SHorizontalBox::Slot().AutoWidth()[ MakeSettingsSubTab(FText::FromString(TEXT("УПРАВЛЕНИЕ")), 1) ]
+			+ SHorizontalBox::Slot().AutoWidth()[ MakeSettingsSubTab(FText::FromString(TEXT("ПРИЦЕЛ")), 2) ]
+		]
+
+		+ SVerticalBox::Slot().FillHeight(1.f)
+		[
+			SNew(SWidgetSwitcher)
+			.WidgetIndex_Lambda([this]() { return SettingsSection; })
+			+ SWidgetSwitcher::Slot()[ MakeVideoPanel() ]
+			+ SWidgetSwitcher::Slot()[ MakeBindsPanel() ]
+			+ SWidgetSwitcher::Slot()[ MakeCrosshairPanel() ]
+		];
+}
+
+TSharedRef<SWidget> SRSMenu::MakeVideoPanel()
 {
 	return SNew(SVerticalBox)
 
@@ -709,6 +1038,19 @@ TSharedRef<SWidget> SRSMenu::MakePlayerCard()
 
 FReply SRSMenu::OnKeyDown(const FGeometry& Geometry, const FKeyEvent& KeyEvent)
 {
+	// Ждём клавишу для перебинда: перехватываем любую, кроме Esc — ею
+	// отменяем, иначе из режима ожидания было бы не выйти.
+	if (CapturingBind != INDEX_NONE)
+	{
+		const FKey Key = KeyEvent.GetKey();
+		if (Key != EKeys::Escape && RSBinds::All().IsValidIndex(CapturingBind))
+		{
+			RSBinds::SetKey(RSBinds::All()[CapturingBind], Key);
+		}
+		CapturingBind = INDEX_NONE;
+		return FReply::Handled();
+	}
+
 	// обе клавиши открытия меню закрывают его тоже, как было до UIOnly
 	if (KeyEvent.GetKey() == EKeys::Escape || KeyEvent.GetKey() == EKeys::P)
 	{

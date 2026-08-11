@@ -44,6 +44,145 @@ public:
 	bool bSilentAim = false;    // F6
 	bool bGodMode = false;      // F7
 	bool bInfiniteMoney = false; // F8
+	bool bAntiAim = false;      // тело смотрит не туда, куда целишься
+	bool bPredict = false;      // упреждение: наводка туда, где цель окажется
+
+	// Подменённый разворот тела: считает сервер, клиенты получают по репликации
+	// и крутят по нему меш. Прицел от него не зависит — целимся по-настоящему.
+	UPROPERTY(Replicated)
+	float AntiAimYaw = 0.f;
+
+	// наклон корпуса тоже уезжает клиентам: иначе у них тело стоит прямо
+	UPROPERTY(Replicated)
+	float AntiAimPitchRep = 0.f;
+
+	// --- настройки читов (правятся в оверлее) ---
+	// анти-аим: 0 — спиной, 1 — спин, 2 — дрожь
+	int32 AntiAimMode = 0;
+	float AntiAimSwing = 10.f;   // амплитуда качания в градусах
+	float AntiAimPitch = -35.f;  // наклон корпуса: минус — головой вниз
+	float AntiAimSpin = 180.f;   // скорость кручения в градусах в секунду
+
+	// триггербот: в пределах какого угла от прицела он жмёт курок.
+	// 0 — только точное попадание луча, как было раньше.
+	float TriggerFov = 2.5f;
+
+	// рейдж: конус поиска цели и порог урона, ниже которого чит не стреляет
+	float RageFov = 90.f;    // 0-180°, от прицела
+	float MinDamage = 15.f;  // не жать курок, если выстрел не нанесёт столько
+	int32 AimHitbox = 0;     // куда целиться: 0 голова, 1 грудь, 2 живот
+	float HitChance = 45.f;  // доля лучей в конусе разброса, которые должны попасть
+
+	// бэктрек: стрельба по тому, где цель была недавно
+	bool bBacktrack = false;
+	float BacktrackMs = 200.f;
+
+	// бинд: пока клавиша зажата, действует другой порог урона
+	int32 BindKeyIndex = 0;   // 0 нет, дальше — список в BindKey()
+	float MinDamageAlt = 100.f;
+	bool bBindHeld = false;   // считается в Tick опросом клавиши
+	FKey BindKey() const;
+	float EffectiveMinDamage() const { return bBindHeld ? MinDamageAlt : MinDamage; }
+
+	// Двойной выстрел: заряд копится временем, пока не стреляешь, и стоит
+	// ровно два выстрела — больше их и не бывает. Полный заряд — оба патрона
+	// уходят мгновенно; неполный — один, и прогресс сбрасывается.
+	bool bDoubleTap = false;
+	float DoubleTapCharge = 0.f; // накоплено секунд
+	// хватит ли одного выстрела, чтобы добить цель под прицелом
+	bool WouldKillWithOneShot() const;
+
+	// Конфиги читов: набор настроек под именем. Лежат в Saved/Cheats/<имя>.ini,
+	// поэтому переживают перезапуск и не мешают друг другу.
+	FString CurrentConfig = TEXT("default");
+	void SaveCheatConfig(const FString& Name);
+	bool LoadCheatConfig(const FString& Name);
+	static TArray<FString> ListCheatConfigs();
+	static FString CheatConfigPath(const FString& Name);
+
+	// Chams: подсветка моделей сквозь стены пост-процессом. Меши врагов
+	// помечаются в CustomDepth, материал сравнивает её со сценой и заливает
+	// закрытые куски цветом. Silhouette-заливка вх этого не умеет — она
+	// рисует прямоугольник, а тут светится сама модель.
+	bool bChams = false;
+	UPROPERTY() class UMaterialInstanceDynamic* ChamsMID = nullptr;
+	void UpdateChams();
+
+	// прочее: мелочи, которые в CS делают руками
+	bool bQuickSwitch = false; // достаём оружие мгновенно, без анимации
+	bool bHitSound = false;    // щелчок при попадании
+	bool bAirStrafe = false;   // автоматический стрейф в воздухе
+	float LastAirYaw = 0.f;    // для расчёта поворота мыши в прыжке
+
+	// Лог событий чита. По умолчанию — только нанесённый и полученный урон:
+	// причины отказа стрелять пишутся каждый кадр и забивают ленту, поэтому
+	// вынесены в отдельный переключатель. Правило простое: строка с ключом
+	// подавления — это диагностика, без ключа — событие боя.
+	bool bCheatLogs = true;
+	bool bCheatLogReasons = false;
+	struct FRSCheatLog { FString Text; float Time; FLinearColor Color; };
+	TArray<FRSCheatLog> CheatLogLines;
+	void CheatLog(const FString& Text, const FLinearColor& Color, const FString& ThrottleKey = FString());
+
+	// вх: силуэт и скелет рисуются поверх геометрии, то есть видны сквозь стены
+	bool bEspSkeleton = false;
+	bool bEspFill = false;
+	int32 EspColor = 0;
+	static FLinearColor EspPalette(int32 Index);
+
+	// предикт: тики по 1/64 с, как серверный такт в CS
+	int32 PredictTicks = 4;
+	bool bPredictOnlyHidden = true; // упреждать только тех, кого не видно
+
+	// что рисует вх
+	bool bEspBox = true;
+	bool bEspHealth = true;
+	bool bEspDist = true;
+	bool bEspLine = true;
+	bool bEspMark = true; // метка упреждения
+
+	static constexpr float PredictTickSeconds = 1.f / 64.f;
+	static constexpr int32 AntiAimModes = 3;
+
+	// Куда целятся по видимой модели: с анти-аимом это не центр капсулы,
+	// поэтому боты начинают мазать. Хитбокс — капсула, она не вращается.
+	FVector GetVisibleAimPoint() const;
+
+	// Где цель окажется через PredictTicks тиков. bTargetHidden — не видно ли
+	// её сейчас: по умолчанию упреждение работает только по скрытым целям,
+	// ради префайра из-за угла, а не вместо обычной наводки.
+	// (Имя не bHidden — так называется поле AActor.)
+	FVector PredictPoint(const AActor* Target, bool bTargetHidden = true) const;
+	bool IsVisibleTo(const AActor* Target) const;
+
+	// Хитбоксы: попадание разбирается по кости, в которую пришёл луч.
+	// Раньше голова определялась по высоте точки — на присевших и на
+	// наклонённых анти-аимом это врало.
+	enum class ERSHitbox : uint8 { Head, Chest, Stomach, Limb };
+	static ERSHitbox HitboxFromBone(FName Bone);
+	static float HitboxMult(ERSHitbox Box);
+	// куда бьёт этот хитбокс по высоте — для наводки аимбота
+	static float HitboxHeight(int32 Index);
+
+	// Урон, который нанесёт это попадание: общий счёт для стрельбы и для
+	// проверки «а стоит ли жать курок». 0 — не по врагу.
+	float DamageForHit(const struct FHitResult& Hit, ERSWeapon Weapon,
+		const FVector& Start, bool& bOutHeadshot) const;
+	// Что нанесёт выстрел прямо сейчас, по текущему направлению взгляда
+	float DamageIfFiredNow() const;
+	// выстрел от чита: только если урон не ниже порога и шанс попасть достаточный
+	void TryFireIfWorthIt();
+	// доля лучей в конусе разброса, попадающих во врага с нужным уроном
+	float EstimateHitChance() const;
+
+	// история позиций врагов для бэктрека: пишется каждый кадр у стрелка,
+	// чтобы не трогать сами цели
+	struct FRSPastPos { FVector Location; float Time; };
+	TMap<TWeakObjectPtr<AActor>, TArray<FRSPastPos>> EnemyHistory;
+	void RecordEnemyHistory();
+	// точка из прошлого, по которой стоит стрелять; если бэктрек выключен
+	// или истории нет — возвращает Fallback
+	FVector BacktrackPoint(const AActor* Target, const FVector& Fallback) const;
 
 	// --- State (HUD reads these) ---
 	UPROPERTY(Replicated)
@@ -129,6 +268,9 @@ public:
 	// переключение чита по номеру строки оверлея: читы включаются мышью,
 	// клавиш F1-F8 больше нет
 	void ToggleCheatByIndex(int32 Index);
+	// правка настройки из оверлея: Delta -1 или +1, у переключателей знак
+	// не важен. Номера настроек совпадают с порядком строк в оверлее.
+	void ApplyCheatSetting(int32 Id, int32 Delta);
 	int32 BuyCategory = -1;      // -1 — выбор категории
 	bool bScoreboardOpen = false;
 
@@ -251,7 +393,14 @@ private:
 	void ApplyWeaponVisuals();
 	void ApplyViewMode();
 
+	// меню читов правит поля персонажа напрямую и само себя закрывает
+	friend class SRSCheatMenu;
+
 	void ToggleCheatMenu();
+
+	// меню читов на Slate: живёт, пока открыто
+	TSharedPtr<class SRSCheatMenu> CheatMenuWidget;
+	TSharedPtr<class SWeakWidget> CheatMenuContainer;
 	void ToggleAimbot()   { bAimbot = !bAimbot; }
 	void ToggleESP()      { bESP = !bESP; }
 	void ToggleTrigger()  { bTriggerbot = !bTriggerbot; }
@@ -260,13 +409,16 @@ private:
 	void ToggleSilent()   { bSilentAim = !bSilentAim; }
 	void ToggleGod()      { bGodMode = !bGodMode; SyncCheats(); }
 	void ToggleMoney()    { bInfiniteMoney = !bInfiniteMoney; SyncCheats(); }
+	void ToggleAntiAim()  { bAntiAim = !bAntiAim; SyncCheats(); }
+	void TogglePredict()  { bPredict = !bPredict; }
 
-	// годмод, спидхак и деньги должен знать сервер: урон, скорость и кошелёк
-	// считаются на нём
+	// годмод, спидхак, деньги и анти-аим должен знать сервер: урон, скорость,
+	// кошелёк и подменённый разворот тела считаются на нём
 	void SyncCheats();
 
 	UFUNCTION(Server, Reliable)
-	void ServerSyncCheats(bool bInGod, bool bInSpeed, bool bInMoney);
+	void ServerSyncCheats(bool bInGod, bool bInSpeed, bool bInMoney, bool bInAntiAim,
+		int32 InMode, float InSwing, float InPitch, float InSpin);
 
 	UFUNCTION(Server, Reliable)
 	void ServerFire(FVector Start, FVector_NetQuantizeNormal Dir, ERSWeapon Weapon);
@@ -291,7 +443,8 @@ private:
 	bool IsEnemyActor(const AActor* Other) const;
 	void RunAimbot();
 	void RunTriggerbot();
-	void TryFire();
+	// bIgnoreCadence — выстрел вне очереди, для двойного выстрела
+	void TryFire(bool bIgnoreCadence = false);
 	void ThrowGrenade();
 	void Die();
 
@@ -382,6 +535,13 @@ private:
 	// поэтому смещение пивота компенсируется там же, в Tick
 	FVector TPGunBaseLoc = FVector::ZeroVector;
 	FVector TPGunPivot = FVector::ZeroVector;
+	// доворот конкретной модели под ось ствола: считается по габаритам в
+	// ApplyWeaponVisuals и обязан применяться в Tick — иначе пересчёт поворота
+	// под кость затирает его, и модели с длинной осью вверх (AWP) висят стоймя
+	FQuat TPGunAlign = FQuat::Identity;
+
+	// магазин кончился этим выстрелом — перезарядимся в конце кадра
+	bool bAutoReloadPending = false;
 
 	bool bFireHeld = false;
 	bool bShotSincePress = false; // полуавтомат: один выстрел на нажатие

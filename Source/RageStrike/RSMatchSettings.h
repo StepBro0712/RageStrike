@@ -16,6 +16,12 @@ namespace RSMatch
 	int32 GetRoundsToWin();       // сколько раундов нужно для победы, 3..16
 	void SetRoundsToWin(int32 Value);
 
+	int32 GetRoundSeconds();      // длительность раунда, 30..300 с
+	void SetRoundSeconds(int32 Value);
+
+	int32 GetBuySeconds();        // закупка перед раундом, 5..60 с
+	void SetBuySeconds(int32 Value);
+
 	// производные правила
 	inline int32 RoundsTotalFor(int32 RoundsToWin) { return (RoundsToWin - 1) * 2; }
 	inline int32 HalfTimeFor(int32 RoundsToWin)    { return RoundsToWin - 1; }

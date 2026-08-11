@@ -96,8 +96,17 @@ private:
 	// шаги: без них слышно только себя, а противников и союзников нет
 	void UpdateFootsteps(float DeltaTime);
 	float StepDistance = 0.f;
+	// память о контакте: где последний раз видели врага или откуда прилетело.
+	// Без неё бот забывал цель в тот же кадр, как терял её из виду.
+	FVector LastContactPos = FVector::ZeroVector;
+	float LastContactTime = -1000.f;
+	static constexpr float MemorySeconds = 6.f;
+
 	FVector GunPivot = FVector::ZeroVector;
 	FVector GunHandLoc = FVector::ZeroVector;
+	// доворот модели под ось ствола, как у игрока: без него модели, вытянутые
+	// не по той оси, висят в руке стоймя
+	FQuat GunAlign = FQuat::Identity;
 
 	UFUNCTION(NetMulticast, Unreliable)
 	void MulticastShot(FVector Start, FVector End);
@@ -129,7 +138,9 @@ private:
 	FVector SteerTowards(const FVector& Destination) const;
 
 	// цель — любой живой противник: игрок или вражеский бот
-	AActor* FindNearestEnemy() const;
+	// Возвращает ближайшего ВИДИМОГО врага; в OutNearestAny кладёт просто
+	// ближайшего — он нужен как направление патруля, когда никого не видно.
+	AActor* FindNearestEnemy(AActor** OutNearestAny = nullptr) const;
 	bool CanSee(const AActor* Target) const;
 	void ShootAt(AActor* Target);
 	bool IsEnemy(const AActor* Other) const;
