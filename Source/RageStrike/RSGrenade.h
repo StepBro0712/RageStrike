@@ -11,6 +11,16 @@ class UStaticMeshComponent;
 class UProjectileMovementComponent;
 class USoundBase;
 
+// Радиус дыма. Одно число на всё: по нему считается масштаб видимого купола,
+// он же задаёт границу, за которой дым перестаёт тушить огонь и закрывать
+// обзор ботам. Разводить видимую и игровую границы нельзя — игрок будет
+// стоять в дыму, которого механика не видит, или наоборот.
+static constexpr float RSSmokeRadius = 325.f;
+
+// Накрыта ли точка дымом. Нужна и огню (дым тушит горящую зону), и гранате
+// (молотов, прилетевший в дым, не загорается вовсе).
+bool RSSmokeCovers(const UWorld* World, const FVector& Point);
+
 // Летящая граната любого типа. Сервер решает, когда и как она сработает,
 // клиенты получают эффекты мультикастом.
 UCLASS()
@@ -43,6 +53,12 @@ public:
 
 	UPROPERTY(VisibleAnywhere)
 	UProjectileMovementComponent* Movement;
+
+	// дым уже распустился — только тогда он что-то перекрывает и тушит
+	bool IsSmokeActive() const { return bSmokeDeployed; }
+
+	// Грузит и кеширует эффект взрыва. Зовётся заранее, на старте матча.
+	static class UNiagaraSystem* PreloadFX();
 
 protected:
 	virtual void BeginPlay() override;

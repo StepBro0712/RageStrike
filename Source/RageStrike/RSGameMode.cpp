@@ -6,6 +6,7 @@
 #include "RSArena.h"
 #include "RSMaps.h"
 #include "RSWeaponPickup.h"
+#include "RSFireZone.h"
 #include "RSPlayerController.h"
 #include "RSMatchSettings.h"
 #include "GameFramework/PlayerStart.h"
@@ -40,6 +41,11 @@ void ARSGameMode::BeginPlay()
 	Super::BeginPlay();
 
 	ApplyMatchSettings();
+
+	// Прогреваем эффект огня на старте матча. Без этого первый молотов
+	// подгружал систему Niagara с её материалами и текстурами синхронно,
+	// в игровом потоке, и игра замирала прямо в момент срабатывания.
+	ARSFireZone::PreloadFX();
 
 	// арена: сервер задаёт Seed, клиенты строят такую же локально по репликации
 	FActorSpawnParameters SP;

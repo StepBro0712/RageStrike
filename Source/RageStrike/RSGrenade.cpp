@@ -14,6 +14,56 @@
 #include "TimerManager.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
+#include "NiagaraComponent.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraSystem.h"
+
+UNiagaraSystem* ARSGrenade::PreloadFX()
+{
+	// Как и у огня: грузим один раз и держим за корень, иначе первая граната
+	// за матч тянет систему с диска синхронно, посреди боя.
+	static UNiagaraSystem* Cached = nullptr;
+	static bool bTried = false;
+	if (!bTried)
+	{
+		bTried = true;
+		Cached = LoadObject<UNiagaraSystem>(
+			nullptr, TEXT("/Game/NiagaraExamples/FX_Explosions/NS_Explosion_Medium.NS_Explosion_Medium"));
+		if (Cached)
+		{
+			Cached->AddToRoot();
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("RS/взрыв: NS_Explosion_Medium не найден"));
+		}
+	}
+	return Cached;
+}
+
+bool RSSmokeCovers(const UWorld* World, const FVector& Point)
+{
+	if (!World)
+	{
+		return false;
+	}
+	for (TActorIterator<ARSGrenade> It(World); It; ++It)
+	{
+		const ARSGrenade* G = *It;
+		if (!IsValid(G) || !G->IsSmokeActive())
+		{
+			continue;
+		}
+		const FVector D = Point - G->GetActorLocation();
+		// По вертикали окно шире радиуса: облако вытянуто вверх, а огонь
+		// лежит на полу — они всё равно должны считаться пересекающимися.
+		if (D.Size2D() < RSSmokeRadius && FMath::Abs(D.Z) < 300.f)
+		{
+			return true;
+		}
+	}
+	return false;
+}
 
 ARSGrenade::ARSGrenade()
 {
@@ -238,13 +288,19 @@ void ARSGrenade::Detonate()
 	}
 	else // молотов и зажигалка
 	{
-		FActorSpawnParameters SP;
-		SP.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-		if (ARSFireZone* Zone = World->SpawnActor<ARSFireZone>(
-			ARSFireZone::StaticClass(), Where, FRotator::ZeroRotator, SP))
+		// В дыму молотов не разгорается вовсе: поджигать зону, которую тут же
+		// потушит проверка в самом огне, значит показать вспышку огня на кадр.
+		const bool bInSmoke = RSSmokeCovers(World, Where);
+		if (!bInSmoke)
 		{
-			Zone->Thrower = Thrower;
-			Zone->Team = Team;
+			FActorSpawnParameters SP;
+			SP.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+			if (ARSFireZone* Zone = World->SpawnActor<ARSFireZone>(
+				ARSFireZone::StaticClass(), Where, FRotator::ZeroRotator, SP))
+			{
+				Zone->Thrower = Thrower;
+				Zone->Team = Team;
+			}
 		}
 		MulticastDetonate(Where);
 		SetActorHiddenInGame(true);
@@ -275,7 +331,19 @@ void ARSGrenade::MulticastDetonate_Implementation(FVector Where)
 		RSAudio::ERange::Explosion);
 	if (Type == ERSWeapon::HEGrenade)
 	{
-		DrawDebugSphere(GetWorld(), Where, 220.f, 16, FColor::Orange, false, 0.25f, 0, 3.f);
+		// Раньше здесь рисовалась отладочная сфера — оранжевый каркас вместо
+		// взрыва. Теперь настоящий эффект; если пак не подключён, откат на
+		// прежний каркас, чтобы взрыв не остался вовсе без обозначения.
+		if (UNiagaraSystem* FX = PreloadFX())
+		{
+			UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+				GetWorld(), FX, Where, FRotator::ZeroRotator,
+				FVector(1.4f), /*bAutoDestroy*/ true);
+		}
+		else
+		{
+			DrawDebugSphere(GetWorld(), Where, 220.f, 16, FColor::Orange, false, 0.25f, 0, 3.f);
+		}
 	}
 }
 
@@ -326,29 +394,45 @@ void ARSGrenade::SpawnSmokeCloud(const FVector& Where)
 
 	Mesh->SetVisibility(false);
 
-	// облако из серых сфер; блокирует канал камеры — боты сквозь дым не видят
-	FRandomStream Rand(GetTypeHash(Where));
-	for (int32 i = 0; i < 12; i++)
+	// Сферы остаются в любом случае: они блокируют канал камеры, и на этом
+	// держатся зрение ботов и определение выстрела сквозь дым в killfeed.
+	// Частицы трассировке не мешают вообще, поэтому заменить их нельзя —
+	// можно только приодеть. Материал теперь полупрозрачный и неосвещаемый:
+	// непрозрачный BasicShapeMaterial и делал из облака пластилиновые шары.
+	UMaterialInterface* SmokeMat = LoadObject<UMaterialInterface>(
+		nullptr, TEXT("/Game/Effects/M_RSSmoke.M_RSSmoke"));
+
+	// Один крупный шар вместо облака из двенадцати. У россыпи сфер по краю
+	// были видны стыки и силуэты отдельных шаров; цельная форма читается
+	// чище — так сделаны дымы в Valorant.
+	UStaticMeshComponent* Puff = NewObject<UStaticMeshComponent>(this);
+	Puff->SetStaticMesh(SphereMesh);
+	Puff->SetupAttachment(GetRootComponent());
+
+	UMaterialInterface* Base = SmokeMat ? SmokeMat : BaseMat;
+	if (Base)
 	{
-		UStaticMeshComponent* Puff = NewObject<UStaticMeshComponent>(this);
-		Puff->SetStaticMesh(SphereMesh);
-		Puff->SetupAttachment(GetRootComponent());
-		if (BaseMat)
-		{
-			UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(BaseMat, this);
-			const float Shade = Rand.FRandRange(0.55f, 0.75f);
-			MID->SetVectorParameterValue(TEXT("Color"), FLinearColor(Shade, Shade, Shade));
-			Puff->SetMaterial(0, MID);
-		}
-		Puff->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
-		Puff->SetCollisionObjectType(ECC_WorldDynamic);
-		Puff->SetCollisionResponseToAllChannels(ECR_Ignore);
-		Puff->SetCollisionResponseToChannel(ECC_Camera, ECR_Block);
-		Puff->SetCastShadow(false);
-		const FVector Offset(Rand.FRandRange(-140.f, 140.f), Rand.FRandRange(-140.f, 140.f),
-			Rand.FRandRange(20.f, 180.f));
-		Puff->SetRelativeLocation(Offset);
-		Puff->SetRelativeScale3D(FVector(Rand.FRandRange(2.6f, 3.6f)));
-		Puff->RegisterComponent();
+		UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(Base, this);
+		MID->SetVectorParameterValue(TEXT("Color"), FLinearColor(0.66f, 0.67f, 0.70f));
+		// Плотнее прежнего: раньше перекрывались двенадцать полупрозрачных
+		// сфер и плотность набиралась сама, у одной набирать её нечем.
+		MID->SetScalarParameterValue(TEXT("Opacity"), 0.94f);
+		Puff->SetMaterial(0, MID);
 	}
+
+	Puff->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	Puff->SetCollisionObjectType(ECC_WorldDynamic);
+	Puff->SetCollisionResponseToAllChannels(ECR_Ignore);
+	Puff->SetCollisionResponseToChannel(ECC_Camera, ECR_Block);
+	Puff->SetCastShadow(false);
+
+	// Масштаб выведен из RSSmokeRadius: движковая сфера радиусом 50 единиц,
+	// значит 260 / 50. Так видимая граница дыма совпадает с той, по которой
+	// он тушит огонь и по которой боты теряют обзор.
+	Puff->SetRelativeScale3D(FVector(RSSmokeRadius / 50.f));
+	// Центр на уровне гранаты: нижняя половина шара уходит под пол, наружу
+	// смотрит ровно купол. С приподнятым центром было видно заметно больше
+	// половины, и дым выглядел висящим над землёй мячом.
+	Puff->SetRelativeLocation(FVector::ZeroVector);
+	Puff->RegisterComponent();
 }

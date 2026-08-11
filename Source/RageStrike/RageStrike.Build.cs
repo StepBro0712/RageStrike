@@ -24,7 +24,9 @@ public class RageStrike : ModuleRules
 			"RenderCore",
 			"RHI",
 			// экран загрузки: логотип и индикатор поверх чёрного окна
-			"MoviePlayer"
+			"MoviePlayer",
+			// эффекты огня и дыма из Niagara Examples Pack
+			"Niagara"
 		});
 	}
 }
