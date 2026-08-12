@@ -82,6 +82,21 @@ def cpp_str(pack, asset):
     return 'TEXT("/Game/Weapons/VM/{p}/{p}/SkeletalMeshes/{a}.{a}")'.format(p=pack, a=asset)
 
 
+def arms_str(pack):
+    """Путь к рукам, запечённым в позу привязки этого ствола.
+
+    Модель рук у каждого оружия своя: в Source поза привязки вьюмодели
+    несёт в себе хват, и у AK, USP и AWP она разная. Одни руки на все
+    стволы рвало бы по швам на суставах — замеры давали растяжение до 36
+    раз на 3.3% рёбер.
+    """
+    d = os.path.join(VM, "Arms", "Baked", "arms_%s" % pack, "SkeletalMeshes")
+    if not os.path.isfile(os.path.join(d, "arms_%s.uasset" % pack)):
+        return "nullptr"
+    return ('TEXT("/Game/Weapons/VM/Arms/Baked/arms_{p}'
+            '/SkeletalMeshes/arms_{p}.arms_{p}")').format(p=pack)
+
+
 OUT_H = r"C:\Dev\RageStrike\Source\RageStrike\RSViewModelTable.h"
 
 lines = []
@@ -109,7 +124,8 @@ for enum, pack in WEAPONS:
     lines.append("\t\t{ %s," % cpp_str(pack, sh[0]))
     lines.append("\t\t  %s," % cpp_str(pack, sh[1]))
     lines.append("\t\t  %s }," % cpp_str(pack, sh[2]))
-    lines.append("\t\t%s }," % cpp_str(pack, c["inspect"]))
+    lines.append("\t\t%s," % cpp_str(pack, c["inspect"]))
+    lines.append("\t\t%s }," % arms_str(pack))
 
 lines.append("};")
 if missing:

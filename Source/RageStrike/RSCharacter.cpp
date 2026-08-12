@@ -1285,6 +1285,45 @@ void ARSCharacter::ApplyWeaponVisuals()
 		FPGun->SetRelativeLocation(GunBaseLoc);
 		FPGun->SetRelativeRotation(GunBaseRot);
 
+		// Руки. В самих вьюмоделях геометрии рук нет — паки CS везут только
+		// оружие, а руки лежат отдельной моделью и просто ездят по тем же
+		// костям. Кости в скелете оружия есть все, обе руки с пальцами.
+		//
+		// Подчиняем руки скелету оружия: SetLeaderPoseComponent копирует позы
+		// по именам костей. Руки взяты из CS:SO той же эпохи, что и наши
+		// вьюмодели, поэтому скелет у них общий — v_weapon.Bip01_*, кость в
+		// кость и с той же позой привязки. Руки повторяют анимацию оружия
+		// целиком, включая перезарядку и пальцы, без собственных анимаций.
+		//
+		// До этого стояли руки из CS2: имена костей приходилось переводить в
+		// схему CS:GO, а размер подгонять множителем, и всё равно геометрию
+		// вело — у Source 2 иначе развёрнуты кости, а этого перенос поз
+		// исправить не может. С одноэпохной моделью вопрос снят.
+		//
+		// Модель рук у каждого ствола своя: в Source поза привязки вьюмодели
+		// несёт в себе хват, у AK, USP и AWP он разный, и общие руки рвало бы
+		// по швам на суставах. Поэтому руки заранее запечены в позу привязки
+		// каждого оружия (Scripts/bake_arms_for_weapon.py), и перенос поз
+		// получается тождественным.
+		//
+		// Меш ставим сравнением с нужным, а не проверкой на пустоту: в
+		// конструкторе компоненту уже назначены руки из старого пака
+		// (SK_FP_Manny_Simple), поэтому «если пусто» не срабатывало никогда,
+		// и в компоненте оставался манекен с чужими именами костей.
+		if (ArmsMesh->GetSkeletalMeshAsset() != VM->Arms)
+		{
+			// Пусто — значит рук под этот ствол не запекли: снимаем меш,
+			// иначе на нём остались бы руки от прошлого оружия, и их
+			// растащило бы по швам чужой позой привязки.
+			ArmsMesh->SetSkeletalMesh(VM->Arms);
+		}
+		// Трансформ тот же, что у оружия: позы копируются в пространстве
+		// компонента, и при расхождении руки уехали бы от ствола.
+		ArmsMesh->SetRelativeScale3D(FVector(Place.Scale));
+		ArmsMesh->SetRelativeLocation(GunBaseLoc);
+		ArmsMesh->SetRelativeRotation(GunBaseRot);
+		ArmsMesh->SetLeaderPoseComponent(FPGun);
+
 		// доставание, затем простой — как в CS при смене оружия
 		if (VM->Draw)
 		{
@@ -1296,7 +1335,9 @@ void ARSCharacter::ApplyWeaponVisuals()
 		}
 	}
 
-	ArmsMesh->SetVisibility(bUseArms && !bThirdPerson);
+	// Руки показываем вместе со скелетной вьюмоделью: без неё им нечего
+	// держать и не за чем следовать.
+	ArmsMesh->SetVisibility(bUsingSkeletalVM && !RSOptions::GetHideViewmodel());
 	GunMesh->SetVisibility(!bThirdPerson && !bUsingSkeletalVM && !RSOptions::GetHideViewmodel());
 	FPGun->SetVisibility(bUsingSkeletalVM && !RSOptions::GetHideViewmodel());
 	TPGunMesh->SetOwnerNoSee(!bThirdPerson);
@@ -3071,6 +3112,15 @@ void ARSCharacter::UpdateViewmodel(float DeltaTime)
 
 	Visual->SetRelativeLocation(GunBaseLoc + Offset);
 	Visual->SetRelativeRotation(GunBaseRot + RotOffset);
+
+	// Руки висят на камере рядом с оружием, а не на нём, поэтому качание,
+	// отдачу и наклоны надо повторить и им: иначе ствол ходит при беге, а
+	// руки стоят колом.
+	if (bUsingSkeletalVM && ArmsMesh)
+	{
+		ArmsMesh->SetRelativeLocation(GunBaseLoc + Offset);
+		ArmsMesh->SetRelativeRotation(GunBaseRot + RotOffset);
+	}
 }
 
 void ARSCharacter::ServerFire_Implementation(FVector Start, FVector_NetQuantizeNormal Dir, ERSWeapon Weapon)

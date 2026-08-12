@@ -17,6 +17,9 @@ struct FRSViewModel
 	UAnimSequence* Reload = nullptr;
 	UAnimSequence* Shoot[3] = { nullptr, nullptr, nullptr };
 	UAnimSequence* Inspect = nullptr;
+	// Руки, запечённые в позу привязки именно этого ствола: у каждой
+	// вьюмодели Source своя поза привязки с уже сложенным хватом.
+	USkeletalMesh* Arms = nullptr;
 
 	bool IsValid() const { return Mesh != nullptr; }
 };

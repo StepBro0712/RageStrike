@@ -22,3 +22,6 @@ Plugins/
 RageStrike_Setup.exe
 Scripts/mirage_info.txt
 Build/Windows/FileOpenOrder/
+
+# Скиллы Claude Code — сторонние, в репозиторий не кладём
+.claude/

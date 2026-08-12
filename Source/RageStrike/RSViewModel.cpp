@@ -20,6 +20,7 @@ namespace RSViewModel
 			const TCHAR* Reload;
 			const TCHAR* Shoot[3];
 			const TCHAR* Inspect;
+			const TCHAR* Arms;
 		};
 
 		#include "RSViewModelTable.h"
@@ -51,6 +52,7 @@ namespace RSViewModel
 				VM.Shoot[i] = LoadPart<UAnimSequence>(E.Shoot[i]);
 			}
 			VM.Inspect = LoadPart<UAnimSequence>(E.Inspect);
+			VM.Arms = LoadPart<USkeletalMesh>(E.Arms);
 
 			// У части стволов вариант выстрела один: подставляем его на
 			// остальные слоты, иначе каждый второй выстрел был бы без анимации.
