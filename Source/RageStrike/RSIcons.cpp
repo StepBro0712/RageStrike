@@ -88,4 +88,5 @@ namespace RSIcons
 	UTexture2D* KillNoscope()               { return LoadAsset(TEXT("KFNoscope")); }
 	UTexture2D* KillBlind()                 { return LoadAsset(TEXT("KFBlind")); }
 	UTexture2D* KillSmoke()                 { return LoadAsset(TEXT("KFSmoke")); }
+	UTexture2D* KillPenetrate()             { return LoadAsset(TEXT("KFPenetrate")); }
 }

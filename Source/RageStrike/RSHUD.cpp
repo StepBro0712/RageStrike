@@ -833,16 +833,17 @@ void ARSHUD::DrawKillFeed(const ARSCharacter* Player)
 
 		// Значки обстоятельств идут после оружия. Обычное убийство не несёт
 		// ни одного — так и просили: если просто, то без иконки.
-		UTexture2D* Badges[4] = { nullptr, nullptr, nullptr, nullptr };
+		UTexture2D* Badges[5] = { nullptr, nullptr, nullptr, nullptr, nullptr };
 		int32 BadgeCount = 0;
 		auto AddBadge = [&](uint8 Bit, UTexture2D* Tex)
 		{
-			if ((E.Flags & Bit) && Tex && BadgeCount < 4)
+			if ((E.Flags & Bit) && Tex && BadgeCount < 5)
 			{
 				Badges[BadgeCount++] = Tex;
 			}
 		};
 		AddBadge(RSKill::Headshot, RSIcons::KillHeadshot());
+		AddBadge(RSKill::Penetrate, RSIcons::KillPenetrate());
 		AddBadge(RSKill::Noscope, RSIcons::KillNoscope());
 		AddBadge(RSKill::Blind, RSIcons::KillBlind());
 		AddBadge(RSKill::Smoke, RSIcons::KillSmoke());

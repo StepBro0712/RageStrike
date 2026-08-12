@@ -56,9 +56,34 @@ FString RSCombatantName(const AActor* Who)
 	return TEXT("?");
 }
 
+int32 RSPenetrationPower(ERSWeapon W)
+{
+	// Сколько преград осилит пуля. Как в CS: снайперка шьёт лучше винтовки,
+	// пистолет — одну тонкую, дробь и нож не шьют вовсе.
+	switch (RSWeapons::Get(W).Mesh)
+	{
+	case ERSMeshKind::Sniper:  return 3;
+	case ERSMeshKind::RifleAK:
+	case ERSMeshKind::RifleM4: return 2;
+	case ERSMeshKind::Pistol:  return 1;
+	default:                   return 0;
+	}
+}
+
 uint8 RSComputeKillFlags(const AActor* Killer, const AActor* Victim, bool bHeadshot)
 {
 	uint8 Flags = bHeadshot ? RSKill::Headshot : 0;
+
+	// Пробитие пришло с выстрелом, а не из состояния: читаем метку, которую
+	// оставила на жертве FireOnePellet.
+	if (const ARSCharacter* VC = Cast<ARSCharacter>(Victim))
+	{
+		if (VC->bLastHitThroughWall) { Flags |= RSKill::Penetrate; }
+	}
+	else if (const ARSBot* VB = Cast<ARSBot>(Victim))
+	{
+		if (VB->bLastHitThroughWall) { Flags |= RSKill::Penetrate; }
+	}
 	if (!Killer || !Victim || Killer == Victim)
 	{
 		return Flags;
@@ -1454,6 +1479,21 @@ FVector ARSCharacter::GetVisibleAimPoint() const
 	return Chest + FakeDir * 30.f;
 }
 
+bool ARSCharacter::IsReachableTo(const AActor* Target) const
+{
+	// Достижима ли цель выстрелом. Отличается от видимости: пуля пробивает
+	// тонкие преграды, и цель за такой стеной аимботу годится, хотя прямой
+	// видимости нет. Считаем тем же проходом, что и настоящий выстрел.
+	if (!Target || !Camera)
+	{
+		return false;
+	}
+	const FVector From = Camera->GetComponentLocation();
+	const FVector To = Target->GetActorLocation() + FVector(0.f, 0.f, 55.f);
+	const FRSBulletPath Path = TraceBullet(From, (To - From).GetSafeNormal(), CurrentWeapon);
+	return Path.bHit && Path.Hit.GetActor() == Target;
+}
+
 bool ARSCharacter::IsVisibleTo(const AActor* Target) const
 {
 	FHitResult Hit;
@@ -2041,12 +2081,11 @@ AActor* ARSCharacter::FindBestTarget(FVector& OutAimPoint) const
 			return;
 		}
 
-		// по скрытой цели наводимся только с включённым упреждением: иначе
-		// аимбот стрелял бы в стены
-		// Наводимся только на тех, между кем и нами нет препятствия:
-		// прицел, уезжающий в стену на скрытую цель, только мешает.
-		// Стрельбой по выбегающим занимается триггербот с упреждением.
-		if (bVisible)
+		// Наводимся на тех, до кого долетит пуля: либо прямая видимость,
+		// либо цель за простреливаемой стеной. Прицел, уезжающий в глухую
+		// стену на недостижимую цель, только мешает — стрельбой по тем, кто
+		// вот-вот выбежит, занимается триггербот с упреждением.
+		if (bVisible || IsReachableTo(Candidate))
 		{
 			Best = Candidate;
 			BestAngle = Angle;
@@ -2231,14 +2270,17 @@ float ARSCharacter::EstimateHitChance() const
 	for (int32 i = 0; i < Samples; i++)
 	{
 		const FVector Dir = FMath::VRandCone(Forward, FMath::DegreesToRadians(Spread));
-		FHitResult Hit;
-		if (!GetWorld()->LineTraceSingleByChannel(Hit, Start, Start + Dir * 20000.f,
-			ECC_Visibility, Params))
+		// тем же проходом, что и настоящая пуля: иначе оценка шанса не видит
+		// пробития и занижает его до нуля за любой преградой
+		const FRSBulletPath Path = TraceBullet(Start, Dir, CurrentWeapon);
+		if (!Path.bHit)
 		{
 			continue;
 		}
+		const FHitResult& Hit = Path.Hit;
 		bool bHead = false;
-		if (DamageForHit(Hit, CurrentWeapon, Start, bHead) >= EffectiveMinDamage())
+		if (DamageForHit(Hit, CurrentWeapon, Start, bHead) * Path.DamageScale
+			>= EffectiveMinDamage())
 		{
 			Good++;
 		}
@@ -3059,10 +3101,9 @@ void ARSCharacter::FireOnePellet(const FVector& Start, const FVector& Dir, ERSWe
 		: (Def.Pellets > 1 ? 3000.f : 20000.f);
 	const FVector End = Start + Dir * Range;
 
-	FHitResult Hit;
-	FCollisionQueryParams Params;
-	Params.AddIgnoredActor(this);
-	const bool bHit = World->LineTraceSingleByChannel(Hit, Start, End, ECC_Visibility, Params);
+	const FRSBulletPath Path = TraceBullet(Start, Dir, Weapon);
+	const FHitResult& Hit = Path.Hit;
+	const bool bHit = Path.bHit;
 
 	const FVector TracerStart = Start + Dir * 60.f + FVector(0.f, 0.f, -12.f);
 	MulticastTracer(TracerStart, bHit ? Hit.ImpactPoint : End, Weapon == ERSWeapon::Knife);
@@ -3074,7 +3115,8 @@ void ARSCharacter::FireOnePellet(const FVector& Start, const FVector& Dir, ERSWe
 
 	AActor* Target = Hit.GetActor();
 	bool bHeadshot = false;
-	const float Damage = DamageForHit(Hit, Weapon, Start, bHeadshot);
+	float Damage = DamageForHit(Hit, Weapon, Start, bHeadshot) * Path.DamageScale;
+	const int32 WallsPassed = Path.WallsPassed;
 
 	if (Damage <= 0.f)
 	{
@@ -3092,10 +3134,12 @@ void ARSCharacter::FireOnePellet(const FVector& Start, const FVector& Dir, ERSWe
 		if (ARSCharacter* Victim = Cast<ARSCharacter>(Target))
 		{
 			Victim->bLastHitHeadshot = bHeadshot;
+			Victim->bLastHitThroughWall = (WallsPassed > 0);
 		}
 		else if (ARSBot* BotVictim = Cast<ARSBot>(Target))
 		{
 			BotVictim->bLastHitHeadshot = bHeadshot;
+			BotVictim->bLastHitThroughWall = (WallsPassed > 0);
 		}
 
 		UGameplayStatics::ApplyDamage(Target, Damage, GetController(), this, nullptr);
@@ -3200,24 +3244,93 @@ float ARSCharacter::DamageForHit(const FHitResult& Hit, ERSWeapon Weapon,
 	return Damage;
 }
 
+FRSBulletPath ARSCharacter::TraceBullet(const FVector& Start, const FVector& Dir,
+	ERSWeapon Weapon) const
+{
+	FRSBulletPath Out;
+
+	const UWorld* World = GetWorld();
+	if (!World)
+	{
+		return Out;
+	}
+
+	const FRSWeaponDef& Def = RSWeapons::Get(Weapon);
+	const float Range = (Weapon == ERSWeapon::Knife) ? 200.f
+		: (Def.Pellets > 1 ? 3000.f : 20000.f);
+	const FVector End = Start + Dir * Range;
+
+	// Пуля проходит сквозь тонкую преграду, теряя часть урона. Сколько
+	// преград осилит — зависит от класса оружия, как в CS.
+	const int32 MaxWalls = RSPenetrationPower(Weapon);
+	FVector TraceFrom = Start;
+
+	FCollisionQueryParams Params;
+	Params.AddIgnoredActor(this);
+	Params.bTraceComplex = true;
+
+	while (true)
+	{
+		Out.bHit = World->LineTraceSingleByChannel(Out.Hit, TraceFrom, End, ECC_Visibility, Params);
+		if (!Out.bHit)
+		{
+			break;
+		}
+
+		// в бойца попали — пуля останавливается
+		if (Cast<ARSCharacter>(Out.Hit.GetActor()) || Cast<ARSBot>(Out.Hit.GetActor()))
+		{
+			break;
+		}
+
+		if (Out.WallsPassed >= MaxWalls)
+		{
+			break; // запас пробития кончился, пуля вязнет в стене
+		}
+
+		// Тыльную грань ищем обратной трассировкой из точки за преградой.
+		// Приём рабочий: замер на Mirage дал толщины 7 и 42 единицы. Если
+		// тыла в пределах порога нет, стена толстая и пуля в ней остаётся.
+		const float MaxThickness = 110.f;
+		const FVector Probe = Out.Hit.ImpactPoint + Dir * MaxThickness;
+		FHitResult Back;
+		FCollisionQueryParams BackParams;
+		BackParams.bTraceComplex = true;
+		if (!World->LineTraceSingleByChannel(Back, Probe, Out.Hit.ImpactPoint,
+			ECC_Visibility, BackParams))
+		{
+			break;
+		}
+
+		// Потеря урона зависит от толщины: фанерная дверь почти не мешает,
+		// кирпичная стена съедает две трети. Плоский коэффициент уравнивал
+		// бы их, а толщину мы всё равно измеряем.
+		const float Thickness = FVector::Dist(Out.Hit.ImpactPoint, Back.ImpactPoint);
+		Out.DamageScale *= FMath::Lerp(0.85f, 0.3f,
+			FMath::Clamp(Thickness / MaxThickness, 0.f, 1.f));
+
+		Out.WallsPassed++;
+		// продолжаем чуть за тыльной гранью, иначе трасса упрётся в неё же
+		TraceFrom = Back.ImpactPoint + Dir * 2.f;
+	}
+
+	return Out;
+}
+
 float ARSCharacter::DamageIfFiredNow() const
 {
 	// Проверка перед выстрелом: чит не должен жать курок в стену. Считаем
-	// по центральному лучу — тому же, по которому полетит пуля.
+	// тем же проходом, что и настоящая пуля — иначе триггербот видит стену
+	// и молчит там, где выстрел на самом деле проходит насквозь.
 	const FVector Start = Camera->GetComponentLocation();
-	const FVector End = Start + Camera->GetForwardVector() * 20000.f;
-
-	FHitResult Hit;
-	FCollisionQueryParams Params;
-	Params.AddIgnoredActor(this);
-	Params.bReturnPhysicalMaterial = false;
-	if (!GetWorld()->LineTraceSingleByChannel(Hit, Start, End, ECC_Visibility, Params))
+	const FRSBulletPath Path = TraceBullet(Start, Camera->GetForwardVector(), CurrentWeapon);
+	if (!Path.bHit)
 	{
 		return 0.f;
 	}
 
 	bool bHead = false;
-	return DamageForHit(Hit, CurrentWeapon, Start, bHead);
+	return DamageForHit(Path.Hit, CurrentWeapon, Start, bHead) * Path.DamageScale;
 }
 
 void ARSCharacter::MulticastTracer_Implementation(FVector Start, FVector End, bool bMelee)
@@ -3352,6 +3465,7 @@ float ARSCharacter::TakeDamage(float DamageAmount, FDamageEvent const& DamageEve
 				RSComputeKillFlags(KillerActor, this, bLastHitHeadshot));
 		}
 		bLastHitHeadshot = false;
+		bLastHitThroughWall = false;
 		Die();
 	}
 	return Taken;

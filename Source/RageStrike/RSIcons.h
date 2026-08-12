@@ -20,4 +20,5 @@ namespace RSIcons
 	UTexture2D* KillNoscope();
 	UTexture2D* KillBlind();
 	UTexture2D* KillSmoke();
+	UTexture2D* KillPenetrate();
 }

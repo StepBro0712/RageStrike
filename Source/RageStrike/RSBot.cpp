@@ -769,6 +769,7 @@ float ARSBot::TakeDamage(float DamageAmount, FDamageEvent const& DamageEvent,
 				RSComputeKillFlags(KillerActor, this, bLastHitHeadshot));
 		}
 		bLastHitHeadshot = false;
+		bLastHitThroughWall = false;
 		if (ARSGameMode* GM = Cast<ARSGameMode>(GetWorld()->GetAuthGameMode()))
 		{
 			GM->OnCombatantDied();

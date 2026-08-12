@@ -26,12 +26,25 @@ namespace RSKill
 {
 	enum : uint8
 	{
-		Headshot = 1 << 0,
-		Noscope  = 1 << 1,   // снайперка без прицела
-		Blind    = 1 << 2,   // убийца сам был ослеплён
-		Smoke    = 1 << 3,   // между убийцей и жертвой стоял дым
+		Headshot  = 1 << 0,
+		Noscope   = 1 << 1,   // снайперка без прицела
+		Blind     = 1 << 2,   // убийца сам был ослеплён
+		Smoke     = 1 << 3,   // между убийцей и жертвой стоял дым
+		Penetrate = 1 << 4,   // пуля прошла сквозь преграду
 	};
 }
+
+// Сколько преград пробивает пуля этого оружия. Ноль — не пробивает вовсе.
+int32 RSPenetrationPower(ERSWeapon W);
+
+// Результат полёта пули с учётом пробития преград.
+struct FRSBulletPath
+{
+	FHitResult Hit;
+	bool bHit = false;
+	int32 WallsPassed = 0;
+	float DamageScale = 1.f;   // накопленная потеря урона на преградах
+};
 
 // Считает маску по состоянию убийцы и жертвы в момент смерти. Работает и для
 // игрока, и для бота: классы разные, а признаки одни и те же.
@@ -187,6 +200,8 @@ public:
 	// ради префайра из-за угла, а не вместо обычной наводки.
 	// (Имя не bHidden — так называется поле AActor.)
 	FVector PredictPoint(const AActor* Target, bool bTargetHidden = true) const;
+	// Долетит ли пуля до цели: прямая видимость либо простреливаемая стена.
+	bool IsReachableTo(const AActor* Target) const;
 	bool IsVisibleTo(const AActor* Target) const;
 
 	// Хитбоксы: попадание разбирается по кости, в которую пришёл луч.
@@ -202,6 +217,12 @@ public:
 	// проверки «а стоит ли жать курок». 0 — не по врагу.
 	float DamageForHit(const struct FHitResult& Hit, ERSWeapon Weapon,
 		const FVector& Start, bool& bOutHeadshot) const;
+	// Полёт пули с учётом пробития преград. Один метод на всех: им считает и
+	// сам выстрел, и предсказание для читов. Пока предсказание ходило своей
+	// одиночной трассировкой, триггербот видел стену и отказывался стрелять
+	// там, где пуля на самом деле проходит.
+	FRSBulletPath TraceBullet(const FVector& Start, const FVector& Dir, ERSWeapon Weapon) const;
+
 	// Что нанесёт выстрел прямо сейчас, по текущему направлению взгляда
 	float DamageIfFiredNow() const;
 	// выстрел от чита: только если урон не ниже порога и шанс попасть достаточный
@@ -323,6 +344,10 @@ public:
 
 	// сервер помечает последний хит хедшотом для killfeed
 	bool bLastHitHeadshot = false;
+	// Последнее попадание пришло сквозь преграду. Запоминается на жертве так
+	// же, как хедшот: пробитие — свойство выстрела, а не состояния в момент
+	// смерти, и по-другому до killfeed его не донести.
+	bool bLastHitThroughWall = false;
 
 	// подтверждение разметки спавна, показывает HUD
 	FString SpawnMarkMessage;
